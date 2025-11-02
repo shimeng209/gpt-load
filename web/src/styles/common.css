@@ -1,0 +1,730 @@
+/* ==============================================================================
+ * 通用样式文件
+ * 包含：通用组件样式、工具栏样式、表单样式等
+ * ============================================================================== */
+
+/* ==============================================================================
+ * 通用 Modal 样式
+ * ============================================================================== */
+
+.base-modal-card {
+  border-radius: var(--border-radius-lg) !important;
+  box-shadow: var(--shadow-lg) !important;
+  transition: all 0.3s ease !important;
+}
+
+.base-modal-card :deep(.n-card-header) {
+  border-bottom: 1px solid var(--border-color);
+  padding: 16px 24px;
+  background: var(--card-bg-solid);
+  border-radius: var(--border-radius-lg) var(--border-radius-lg) 0 0;
+}
+
+.base-modal-card :deep(.n-card-header__main) {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.base-modal-content {
+  max-height: calc(80vh - 140px); /* 减去头部和底部的高度 */
+  overflow-y: auto;
+  padding: 0;
+}
+
+.base-modal-card :deep(.n-card__content) {
+  padding: 24px;
+  max-height: 80vh;
+  overflow-y: auto;
+}
+
+.base-modal-card :deep(.n-card__footer) {
+  border-top: 1px solid var(--border-color);
+  padding: 16px 24px;
+  background: var(--card-bg-solid);
+  border-radius: 0 0 var(--border-radius-lg) var(--border-radius-lg);
+}
+
+.base-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  align-items: center;
+}
+
+.base-modal-footer :deep(.n-button) {
+  min-width: 80px;
+  font-weight: 500;
+  border-radius: var(--border-radius-md);
+}
+
+/* ==============================================================================
+ * 通用表单样式
+ * ============================================================================== */
+
+.form-section {
+  margin-top: 20px;
+}
+
+.form-section:first-child {
+  margin-top: 0;
+}
+
+.section-title {
+  font-size: 1rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin: 0 0 16px 0;
+  padding-bottom: 8px;
+  border-bottom: 2px solid var(--border-color);
+}
+
+.form-row {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+}
+
+.form-item-half {
+  flex: 1;
+  width: 50%;
+}
+
+/* 表单标签样式 */
+:deep(.n-form-item-label) {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+:deep(.n-form-item-blank) {
+  flex-grow: 1;
+}
+
+/* 输入框样式 */
+:deep(.n-input) {
+  --n-border-radius: var(--border-radius-md);
+  --n-border: 1px solid var(--border-color);
+  --n-border-hover: 1px solid var(--primary-color);
+  --n-border-focus: 1px solid var(--primary-color);
+  --n-box-shadow-focus: 0 0 0 2px var(--primary-color-suppl);
+}
+
+:deep(.n-select) {
+  --n-border-radius: var(--border-radius-md);
+}
+
+:deep(.n-input-number) {
+  --n-border-radius: var(--border-radius-md);
+}
+
+:deep(.n-button) {
+  --n-border-radius: var(--border-radius-md);
+}
+
+/* 表单反馈 */
+:deep(.n-form-item-feedback-wrapper) {
+  min-height: 10px;
+}
+
+/* ==============================================================================
+ * 通用工具栏样式
+ * ============================================================================== */
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 16px;
+  background: var(--card-bg-solid);
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+  gap: 16px;
+  min-height: 64px;
+}
+
+.toolbar-left {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.toolbar-right {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  flex: 1;
+  justify-content: flex-end;
+  min-width: 0;
+}
+
+.toolbar :deep(.n-button) {
+  font-weight: 500;
+}
+
+/* ==============================================================================
+ * 通用表格样式
+ * ============================================================================== */
+
+.table-container {
+  background: var(--card-bg-solid);
+  border-radius: var(--border-radius-md);
+  box-shadow: var(--shadow-md);
+  border: 1px solid var(--border-color);
+  overflow: hidden;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.table-header {
+  border-bottom: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.table-body {
+  flex: 1;
+  overflow-y: auto;
+  min-height: 0;
+}
+
+.table-footer {
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+  border-radius: 0 0 var(--border-radius-md) var(--border-radius-md);
+}
+
+.pagination-container {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  background: var(--card-bg-solid);
+  border-top: 1px solid var(--border-color);
+  flex-shrink: 0;
+}
+
+.pagination-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+.pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.page-info {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+
+/* ==============================================================================
+ * 通用卡片样式
+ * ============================================================================== */
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
+}
+
+.key-card {
+  background: var(--card-bg-solid);
+  border: 1px solid var(--border-color);
+  border-radius: var(--border-radius-md);
+  padding: 16px;
+  transition: all 0.2s;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+  width: 100%;
+  min-height: auto;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.key-card:hover {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
+}
+
+.card-main {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+
+.card-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: 1;
+  min-width: 0;
+}
+
+.card-bottom {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: auto;
+  padding-top: 8px;
+}
+
+.card-stats {
+  display: flex;
+  gap: 8px;
+  font-size: 12px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  flex: 1;
+  min-width: 0;
+}
+
+.stat-item {
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+
+.stat-item strong {
+  color: var(--text-primary);
+  font-weight: 600;
+}
+
+.card-actions {
+  flex-shrink: 0;
+}
+
+.card-actions :deep(.n-button) {
+  padding: 0 4px;
+}
+
+/* ==============================================================================
+ * 通用提示和帮助样式
+ * ============================================================================== */
+
+.form-label-with-tooltip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.help-icon {
+  color: var(--text-tertiary);
+  font-size: 14px;
+  cursor: help;
+  transition: color 0.2s ease;
+}
+
+.help-icon:hover {
+  color: var(--primary-color);
+}
+
+.section-title-with-tooltip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+
+.section-help {
+  font-size: 16px;
+}
+
+.collapse-header-with-tooltip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 500;
+}
+
+.collapse-help {
+  font-size: 14px;
+}
+
+/* Tooltip 美化 */
+:deep(.n-tooltip__trigger) {
+  display: inline-flex;
+  align-items: center;
+}
+
+:deep(.n-tooltip) {
+  --n-font-size: 13px;
+  --n-border-radius: var(--border-radius-md);
+}
+
+:deep(.n-tooltip .n-tooltip__content) {
+  max-width: 320px;
+  line-height: 1.5;
+}
+
+:deep(.n-tooltip .n-tooltip__content div) {
+  white-space: pre-line;
+}
+
+/* ==============================================================================
+ * 通用按钮组样式
+ * ============================================================================== */
+
+.button-group {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.button-group :deep(.n-button) {
+  flex-shrink: 0;
+}
+
+.button-group-right {
+  margin-left: auto;
+}
+
+/* ==============================================================================
+ * 通用空状态样式
+ * ============================================================================== */
+
+.empty-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  height: 200px;
+  padding: 40px;
+}
+
+.empty-icon {
+  font-size: 48px;
+  color: var(--text-tertiary);
+  margin-bottom: 16px;
+}
+
+.empty-text {
+  color: var(--text-secondary);
+  font-size: 14px;
+  text-align: center;
+}
+
+/* ==============================================================================
+ * 通用加载和状态样式
+ * ============================================================================== */
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  padding: 40px;
+}
+
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-color);
+  border-top: 3px solid var(--primary-color);
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+.status-indicator {
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  margin-right: 8px;
+}
+
+.status-indicator.success {
+  background-color: var(--success-color);
+}
+
+.status-indicator.error {
+  background-color: var(--error-color);
+}
+
+.status-indicator.warning {
+  background-color: var(--warning-color);
+}
+
+.status-indicator.info {
+  background-color: var(--info-color);
+}
+
+/* ==============================================================================
+ * 通用进度条样式
+ * ============================================================================== */
+
+.progress-container {
+  width: 100%;
+  background: var(--bg-tertiary);
+  border-radius: var(--border-radius-sm);
+  overflow: hidden;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--primary-color);
+  border-radius: var(--border-radius-sm);
+  transition: width 0.3s ease;
+}
+
+.progress-bar.success {
+  background: var(--success-color);
+}
+
+.progress-bar.warning {
+  background: var(--warning-color);
+}
+
+.progress-bar.error {
+  background: var(--error-color);
+}
+
+/* ==============================================================================
+ * 通用折叠面板样式
+ * ============================================================================== */
+
+:deep(.n-collapse-item__header) {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+
+:deep(.n-collapse-item) {
+  --n-title-padding: 16px 0;
+}
+
+:deep(.n-base-selection-label) {
+  height: 40px;
+}
+
+/* ==============================================================================
+ * 通用响应式适配
+ * ============================================================================== */
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+  }
+
+  .toolbar-left,
+  .toolbar-right {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .form-row {
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .form-item-half {
+    width: 100%;
+  }
+
+  .section-title {
+    font-size: 0.9rem;
+  }
+
+  .card-grid {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  .card-main {
+    flex-direction: row;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .card-actions {
+    flex-shrink: 0;
+  }
+
+  .button-group {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .button-group-right {
+    margin-left: 0;
+    margin-top: 8px;
+  }
+
+  .base-modal-card {
+    width: 95vw !important;
+    max-width: 95vw !important;
+    margin: 0;
+    border-radius: var(--border-radius-md) !important;
+  }
+
+  .base-modal-card :deep(.n-card__header) {
+    padding: 12px 16px;
+  }
+
+  .base-modal-card :deep(.n-card__content) {
+    padding: 16px;
+    max-height: 70vh;
+  }
+
+  .base-modal-card :deep(.n-card__footer) {
+    padding: 12px 16px;
+  }
+
+  .base-modal-footer {
+    flex-direction: column-reverse;
+    gap: 8px;
+  }
+
+  .base-modal-footer :deep(.n-button) {
+    width: 100%;
+    margin: 0;
+  }
+}
+
+/* 超小屏幕适配 */
+@media (max-width: 480px) {
+  .base-modal-card {
+    width: 98vw !important;
+    max-width: 98vw !important;
+  }
+
+  .base-modal-card :deep(.n-card__header) {
+    padding: 10px 12px;
+  }
+
+  .base-modal-card :deep(.n-card__content) {
+    padding: 12px;
+    max-height: 65vh;
+  }
+
+  .base-modal-card :deep(.n-card__footer) {
+    padding: 10px 12px;
+  }
+
+  .section-title {
+    font-size: 0.85rem;
+  }
+
+  .help-icon {
+    font-size: 12px;
+  }
+}
+
+/* ==============================================================================
+ * 通用动画效果
+ * ============================================================================== */
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slideInUp {
+  from {
+    opacity: 0;
+    transform: translateY(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes slideInDown {
+  from {
+    opacity: 0;
+    transform: translateY(-20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes scaleIn {
+  from {
+    opacity: 0;
+    transform: scale(0.9);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* 动画类 */
+.fade-in {
+  animation: fadeIn 0.3s ease-out;
+}
+
+.slide-in-up {
+  animation: slideInUp 0.3s ease-out;
+}
+
+.slide-in-down {
+  animation: slideInDown 0.3s ease-out;
+}
+
+.scale-in {
+  animation: scaleIn 0.3s ease-out;
+}
+
+/* ==============================================================================
+ * 通用暗黑模式适配
+ * ============================================================================== */
+
+:root.dark .base-modal-card {
+  background: var(--card-bg-solid);
+  border: 1px solid var(--border-color);
+}
+
+:root.dark .base-modal-card :deep(.n-card-header) {
+  background: var(--card-bg-solid);
+  border-bottom-color: var(--border-color);
+}
+
+:root.dark .base-modal-card :deep(.n-card__footer) {
+  background: var(--card-bg-solid);
+  border-top-color: var(--border-color);
+}
+
+:root.dark .key-card {
+  background: var(--card-bg-solid);
+  border-color: var(--border-color);
+}
+
+:root.dark .progress-container {
+  background: var(--bg-tertiary);
+}
+
+/* ==============================================================================
+ * 通用打印样式
+ * ============================================================================== */
+
+@media print {
+  .toolbar,
+  .card-actions,
+  .base-modal-footer {
+    display: none !important;
+  }
+
+  .key-card {
+    break-inside: avoid;
+    box-shadow: none;
+    border: 1px solid #ccc;
+  }
+}

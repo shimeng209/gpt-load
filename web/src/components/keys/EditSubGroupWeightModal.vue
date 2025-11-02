@@ -71,7 +71,7 @@ const rules: FormRules = {
         if (value < 0) {
           return new Error(t("keys.weightCannotBeNegative"));
         }
-        if (value > 1000) {
+        if (value > 100) {
           return new Error(t("keys.weightMaxExceeded"));
         }
         return true;
@@ -135,7 +135,7 @@ async function handleSubmit() {
 
 // 快速调整权重
 function adjustWeight(delta: number) {
-  const newWeight = Math.max(0, Math.min(1000, formData.weight + delta));
+  const newWeight = Math.max(0, Math.min(100, formData.weight + delta));
   formData.weight = newWeight;
 }
 </script>
@@ -190,7 +190,7 @@ function adjustWeight(delta: number) {
               <n-input-number
                 v-model:value="formData.weight"
                 :min="0"
-                :max="1000"
+                :max="100"
                 :precision="0"
                 :placeholder="t('keys.enterWeight')"
                 style="flex: 1"
@@ -202,14 +202,10 @@ function adjustWeight(delta: number) {
                 <n-button size="small" @click="adjustWeight(-1)" :disabled="formData.weight <= 0">
                   -1
                 </n-button>
-                <n-button size="small" @click="adjustWeight(1)" :disabled="formData.weight >= 1000">
+                <n-button size="small" @click="adjustWeight(1)" :disabled="formData.weight >= 100">
                   +1
                 </n-button>
-                <n-button
-                  size="small"
-                  @click="adjustWeight(10)"
-                  :disabled="formData.weight >= 1000"
-                >
+                <n-button size="small" @click="adjustWeight(10)" :disabled="formData.weight >= 100">
                   +10
                 </n-button>
               </div>

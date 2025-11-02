@@ -30,6 +30,27 @@ export default defineConfig(({ mode }) => {
     build: {
       outDir: "dist",
       assetsDir: "assets",
+      // 调整chunk大小警告阈值（默认500kb），UI库通常较大
+      chunkSizeWarningLimit: 1500,
+      target: "es2015",
+      // 代码分割配置
+      rollupOptions: {
+        output: {
+          // 手动分割vendor库
+          manualChunks: {
+            // Vue生态系统
+            "vue-vendor": ["vue", "vue-router", "vue-i18n"],
+            // Naive UI及其图标库
+            "naive-ui": ["naive-ui", "@vicons/ionicons5"],
+            // 其他第三方库
+            vendor: ["axios", "@vueuse/core"],
+          },
+        },
+      },
+    },
+    // 定义常量，注入版本号
+    define: {
+      __APP_VERSION__: JSON.stringify(env.VITE_VERSION || "1.0.0"),
     },
   };
 });

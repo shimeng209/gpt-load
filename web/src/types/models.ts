@@ -53,6 +53,33 @@ export interface SubGroupInfo {
   invalid_keys: number;
 }
 
+// 模型映射目标
+export interface ModelMappingTarget {
+  sub_group_id: number;
+  weight: number;
+  sub_group_name?: string;
+  model: string; // 实际模型名称 - 每个目标对应一个具体模型
+}
+
+// 模型映射
+export interface ModelMapping {
+  model: string;
+  targets: ModelMappingTarget[];
+}
+
+// 模型映射目标配置（创建/更新时使用）
+export interface ModelMappingTargetConfig {
+  sub_group_id: number;
+  weight: number;
+  model: string;
+}
+
+// 模型映射配置（创建/更新时使用）
+export interface ModelMappingConfig {
+  model: string;
+  targets: ModelMappingTargetConfig[];
+}
+
 // 父聚合分组信息（展示时使用）
 export interface ParentAggregateGroup {
   group_id: number;
@@ -80,6 +107,7 @@ export interface Group {
   group_type?: GroupType;
   sub_groups?: SubGroupInfo[]; // 子分组列表（仅聚合分组）
   sub_group_ids?: number[]; // 子分组ID列表
+  model_mappings?: ModelMapping[]; // 模型映射列表（仅聚合分组）
   created_at?: string;
   updated_at?: string;
 }
@@ -143,24 +171,25 @@ export interface TaskInfo {
   error?: string;
 }
 
-// Based on backend response
+// Based on backend response - matching Go struct fields
 export interface RequestLog {
-  id: string;
+  id: number;
   timestamp: string;
   group_id: number;
-  key_id: number;
+  group_name?: string;
+  parent_group_id?: number;
+  parent_group_name?: string;
+  key_value?: string;
+  key_hash?: string;
+  model: string;
   is_success: boolean;
   source_ip: string;
   status_code: number;
   request_path: string;
-  duration_ms: number;
+  duration_ms: number; // Go: Duration -> frontend: duration_ms
   error_message: string;
   user_agent: string;
   request_type: "retry" | "final";
-  group_name?: string;
-  parent_group_name?: string;
-  key_value?: string;
-  model: string;
   upstream_addr: string;
   is_stream: boolean;
   request_body?: string;
@@ -181,6 +210,7 @@ export interface LogsResponse {
 export interface LogFilter {
   page?: number;
   page_size?: number;
+  fields?: string; // 新增：字段选择参数
   group_name?: string;
   parent_group_name?: string;
   key_value?: string;

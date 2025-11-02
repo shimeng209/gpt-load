@@ -839,11 +839,52 @@ function formatNumber(num: number): string {
 
 /* Tooltip 样式 */
 .sub-group-info-tooltip {
-  min-width: 450px;
-  max-width: 600px;
+  min-width: 300px;
+  max-width: 90vw;
+  width: auto;
   padding: 8px;
   max-height: 70vh;
   overflow-y: auto;
+}
+
+/* 移动端适配 */
+@media (max-width: 768px) {
+  .sub-group-info-tooltip {
+    min-width: 280px;
+    max-width: 85vw;
+    font-size: 12px;
+  }
+
+  .info-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
+  }
+
+  .info-title {
+    font-size: 14px;
+  }
+
+  .info-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 4px;
+  }
+
+  .info-label {
+    min-width: auto;
+    font-size: 11px;
+  }
+
+  .info-value {
+    text-align: left;
+    font-size: 12px;
+  }
+
+  .upstream-input {
+    font-size: 11px;
+    padding: 3px 6px;
+  }
 }
 
 .info-header {

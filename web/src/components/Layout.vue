@@ -177,7 +177,9 @@ const toggleMenu = () => {
 
 .content-wrapper {
   padding: 16px;
-  min-height: calc(100vh - 111px);
+  min-height: calc(100vh - 111px); /* 保持最小高度，但允许增长 */
+  height: auto; /* 允许根据内容增长 */
+  overflow: visible; /* 确保内容可见 */
 }
 
 .layout-footer {

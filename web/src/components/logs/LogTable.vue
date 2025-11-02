@@ -70,6 +70,8 @@ const totalPages = computed(() => Math.ceil(total.value / pageSize.value));
 // Modal for viewing request/response details
 const showDetailModal = ref(false);
 const selectedLog = ref<LogRow | null>(null);
+const loadingDetail = ref(false);
+const logDetailCache = new Map<number, RequestLog>(); // 缓存详情数据
 
 // Filters
 const filters = reactive({
@@ -100,9 +102,13 @@ const requestTypeOptions = [
 const loadLogs = async () => {
   loading.value = true;
   try {
+    // 定义要查询的字段，排除 request_body 大字段
+    const fields = 'id,timestamp,is_success,request_type,is_stream,status_code,duration,parent_group_name,group_name,model,key_value,source_ip,request_path,upstream_addr,error_message,user_agent';
+
     const params: LogFilter = {
       page: currentPage.value,
       page_size: pageSize.value,
+      fields, // 添加字段过滤，排除 request_body
       parent_group_name: filters.parent_group_name || undefined,
       group_name: filters.group_name || undefined,
       key_value: filters.key_value || undefined,
@@ -151,14 +157,54 @@ const toggleKeyVisibility = (row: LogRow) => {
   row.is_key_visible = !row.is_key_visible;
 };
 
-const viewLogDetails = (row: LogRow) => {
+const viewLogDetails = async (row: LogRow) => {
   selectedLog.value = row;
   showDetailModal.value = true;
+
+  // 检查缓存中是否有详情数据（主要检查 request_body）
+  if (!logDetailCache.has(row.id) && !row.request_body) {
+    await loadLogDetail(row.id);
+  } else if (logDetailCache.has(row.id)) {
+    // 从缓存恢复详情数据
+    const cachedDetail = logDetailCache.get(row.id)!;
+    Object.assign(selectedLog.value, cachedDetail);
+  }
 };
 
 const closeDetailModal = () => {
   showDetailModal.value = false;
   selectedLog.value = null;
+  loadingDetail.value = false;
+};
+
+// 加载日志详情（主要是 request_body）
+const loadLogDetail = async (logId: number) => {
+  loadingDetail.value = true;
+  try {
+    // 调用详情API获取完整数据
+    const res = await logApi.getLogDetail(logId);
+    if (res.code === 0 && res.data) {
+      // 缓存详情数据，限制缓存大小为最多50条
+      if (logDetailCache.size >= 50) {
+        // 删除最旧的缓存项
+        const firstKey = logDetailCache.keys().next().value;
+        if (firstKey !== undefined) {
+          logDetailCache.delete(firstKey);
+        }
+      }
+      logDetailCache.set(logId, res.data);
+
+      // 更新当前选中日志的详情
+      if (selectedLog.value && selectedLog.value.id === logId) {
+        Object.assign(selectedLog.value, res.data);
+      }
+    }
+  } catch (error) {
+    console.error('Failed to load log detail:', error);
+    window.$message.error(t("logs.loadDetailFailed"));
+  } finally {
+    loadingDetail.value = false;
+  }
 };
 
 const formatJsonString = (jsonStr: string) => {
@@ -724,7 +770,14 @@ const deselectAllColumns = () => {
       :title="t('logs.requestDetails')"
     >
       <div v-if="selectedLog" style="max-height: 65vh; overflow-y: auto">
-        <n-space vertical size="small">
+        <!-- 详情加载状态 -->
+        <n-spin v-if="loadingDetail" :show="loadingDetail" style="min-height: 200px">
+          <div style="text-align: center; padding: 40px;">
+            <n-text depth="3">{{ t("logs.loadingDetail") }}</n-text>
+          </div>
+        </n-spin>
+
+        <n-space v-else vertical size="small">
           <!-- 基本信息 -->
           <n-card
             :title="t('logs.basicInfo')"

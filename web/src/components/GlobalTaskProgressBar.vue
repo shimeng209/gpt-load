@@ -79,14 +79,24 @@ async function pollOnce() {
             },
           });
 
-          // 触发分组数据刷新
+          // 触发分组数据刷新（排除模型测试操作）
           if (task.group_name && task.finished_at) {
             appState.lastCompletedTask = {
               groupName: task.group_name,
               taskType: task.task_type,
               finishedAt: task.finished_at,
             };
-            appState.groupDataRefreshTrigger++;
+
+            // 只有密钥验证、导入和删除操作才需要刷新数据
+            // 模型测试等操作不需要刷新，因为它们不修改密钥数据
+            const shouldRefreshData =
+              task.task_type === "KEY_VALIDATION" ||
+              task.task_type === "KEY_IMPORT" ||
+              task.task_type === "KEY_DELETE";
+
+            if (shouldRefreshData) {
+              appState.groupDataRefreshTrigger++;
+            }
           }
         }
       }

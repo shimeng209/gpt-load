@@ -161,7 +161,8 @@ function resetForm() {
 
 // 添加子分组项
 function addSubGroupItem() {
-  formData.sub_groups.push({ group_id: null, weight: 1 });
+  const nextWeight = formData.sub_groups.length; // 每加一次加1
+  formData.sub_groups.push({ group_id: null, weight: nextWeight });
 }
 
 // 删除子分组项
@@ -210,10 +211,36 @@ async function handleSubmit() {
 const canAddMore = computed(() => {
   return formData.sub_groups.length < getAvailableOptions.value.length;
 });
+
+// 计算弹窗的动态样式
+const modalStyle = computed(() => {
+  const subGroupCount = formData.sub_groups.length;
+
+  // 根据子分组项数量计算宽度
+  let width = 500; // 默认最小宽度
+  if (subGroupCount >= 4) {
+    width = Math.min(500 + (subGroupCount - 3) * 80, 900); // 每增加一项增加80px，最大900px
+  } else if (subGroupCount >= 2) {
+    width = 500 + (subGroupCount - 1) * 40; // 2-3项时每项增加40px
+  }
+
+  // 根据子分组项数量计算高度
+  let height = 350; // 默认最小高度
+  if (subGroupCount >= 4) {
+    height = Math.min(350 + (subGroupCount - 3) * 50, window.innerHeight * 0.85); // 每增加一项增加50px
+  } else if (subGroupCount >= 2) {
+    height = 350 + (subGroupCount - 1) * 25; // 2-3项时每项增加25px
+  }
+
+  return {
+    width: `${width}px`,
+    height: `${height}px`,
+  };
+});
 </script>
 
 <template>
-  <n-modal :show="show" @update:show="handleClose" class="add-sub-group-modal">
+  <n-modal :show="show" @update:show="handleClose" class="add-sub-group-modal" :style="modalStyle">
     <n-card
       class="add-sub-group-card"
       :title="t('keys.addSubGroup')"
@@ -270,7 +297,8 @@ const canAddMore = computed(() => {
                 <n-input-number
                   v-model:value="item.weight"
                   :min="0"
-                  :max="1000"
+                  :max="100"
+                  :step="1"
                   :placeholder="t('keys.enterWeight')"
                   style="width: 100%"
                 />
@@ -320,7 +348,20 @@ const canAddMore = computed(() => {
 
 <style scoped>
 .add-sub-group-modal {
-  width: 700px;
+  /* 宽度和高度现在通过内联样式动态控制 */
+  transition:
+    width 0.3s ease,
+    height 0.3s ease;
+}
+
+.add-sub-group-card {
+  /* 使用100%高度适应动态尺寸 */
+  height: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+  border-radius: var(--border-radius-lg) !important;
+  display: flex;
+  flex-direction: column;
 }
 
 .form-section {

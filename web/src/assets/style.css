@@ -1,6 +1,9 @@
 /* 导入CSS变量定义 */
 @import "./variables.css";
 
+/* 导入通用样式 */
+@import "../styles/common.css";
+
 :root {
   overflow-y: auto;
   font-family:
