@@ -69,6 +69,21 @@ type SubGroupInfo struct {
 	InvalidKeys int64 `json:"invalid_keys"`
 }
 
+// ModelMappingTarget 定义模型映射的单个目标
+type ModelMappingTarget struct {
+	SubGroupID   uint     `json:"sub_group_id"`
+	Weight       int      `json:"weight"`
+	SubGroupName string   `json:"sub_group_name,omitempty"`
+	Model        string   `json:"model"`        // 保持向后兼容
+	Models       []string `json:"models"`       // 多模型支持
+}
+
+// ModelMapping 定义模型名称到子分组集合的映射
+type ModelMapping struct {
+	Model   string               `json:"model"`
+	Targets []ModelMappingTarget `json:"targets"`
+}
+
 // ParentAggregateGroupInfo 用于API响应的父聚合分组信息
 type ParentAggregateGroupInfo struct {
 	GroupID     uint   `json:"group_id"`
@@ -95,8 +110,10 @@ type Group struct {
 	ParamOverrides     datatypes.JSONMap    `gorm:"type:json" json:"param_overrides"`
 	Config             datatypes.JSONMap    `gorm:"type:json" json:"config"`
 	HeaderRules        datatypes.JSON       `gorm:"type:json" json:"header_rules"`
+	ModelMappings      datatypes.JSON       `gorm:"type:json" json:"model_mappings"`
 	APIKeys            []APIKey             `gorm:"foreignKey:GroupID" json:"api_keys"`
 	SubGroups          []GroupSubGroup      `gorm:"-" json:"sub_groups,omitempty"`
+	ModelMappingList   []ModelMapping       `gorm:"-" json:"model_mappings_list,omitempty"`
 	LastValidatedAt    *time.Time           `json:"last_validated_at"`
 	CreatedAt          time.Time            `json:"created_at"`
 	UpdatedAt          time.Time            `json:"updated_at"`

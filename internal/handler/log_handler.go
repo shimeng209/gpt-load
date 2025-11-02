@@ -11,6 +11,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/sirupsen/logrus"
+	"gorm.io/gorm"
 )
 
 // LogResponse defines the structure for log entries in the API response
@@ -45,6 +46,39 @@ func (s *Server) GetLogs(c *gin.Context) {
 
 	pagination.Items = logs
 	response.Success(c, pagination)
+}
+
+// GetLogDetail handles fetching a single log entry by ID with all fields including request_body.
+func (s *Server) GetLogDetail(c *gin.Context) {
+	id := c.Param("id")
+	if id == "" {
+		response.Error(c, app_errors.NewValidationError("log ID is required"))
+		return
+	}
+
+	var log models.RequestLog
+	err := s.DB.Where("id = ?", id).First(&log).Error
+	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			response.Error(c, app_errors.NewNotFoundError("log not found"))
+		} else {
+			response.Error(c, app_errors.ParseDBError(err))
+		}
+		return
+	}
+
+	// 解密密钥用于前端显示
+	if log.KeyValue != "" {
+		decryptedValue, err := s.EncryptionSvc.Decrypt(log.KeyValue)
+		if err != nil {
+			logrus.WithError(err).WithField("log_id", log.ID).Error("Failed to decrypt log key value")
+			log.KeyValue = "failed-to-decrypt"
+		} else {
+			log.KeyValue = decryptedValue
+		}
+	}
+
+	response.Success(c, log)
 }
 
 // ExportLogs handles exporting filtered log keys to a CSV file.

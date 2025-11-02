@@ -90,6 +90,34 @@ func (b *BaseChannel) BuildUpstreamURL(originalURL *url.URL, groupName string) (
 	return finalURL.String(), nil
 }
 
+// BuildUpstreamURLForAggregate constructs the target URL for aggregate group sub-groups.
+// It uses the validation endpoint instead of the request path to ensure compatibility
+// with different upstream endpoints.
+func (b *BaseChannel) BuildUpstreamURLForAggregate(originalURL *url.URL, groupName string) (string, error) {
+	base := b.getUpstreamURL()
+	if base == nil {
+		return "", fmt.Errorf("no upstream URL configured for channel %s", b.Name)
+	}
+
+	finalURL := *base
+
+	// For aggregate groups, always use the validation endpoint
+	// This ensures each sub-group uses its configured endpoint path
+	targetPath := b.ValidationEndpoint
+	if targetPath == "" {
+		// Fallback to request path if no validation endpoint is configured
+		proxyPrefix := "/proxy/" + groupName
+		requestPath := originalURL.Path
+		requestPath = strings.TrimPrefix(requestPath, proxyPrefix)
+		targetPath = requestPath
+	}
+
+	finalURL.Path = strings.TrimRight(finalURL.Path, "/") + targetPath
+	finalURL.RawQuery = originalURL.RawQuery
+
+	return finalURL.String(), nil
+}
+
 // IsConfigStale checks if the channel's configuration is stale compared to the provided group.
 func (b *BaseChannel) IsConfigStale(group *models.Group) bool {
 	if b.channelType != group.ChannelType {

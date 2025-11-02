@@ -7,7 +7,6 @@ import (
 	"gpt-load/internal/config"
 	"gpt-load/internal/models"
 	"gpt-load/internal/store"
-	"strings"
 	"sync"
 	"time"
 
@@ -20,7 +19,7 @@ import (
 const (
 	RequestLogCachePrefix    = "request_log:"
 	PendingLogKeysSet        = "pending_log_keys"
-	DefaultLogFlushBatchSize = 200
+	DefaultLogFlushBatchSize = 200 // 保持默认批次大小
 )
 
 // RequestLogService is responsible for managing request logs.
@@ -196,104 +195,162 @@ func (s *RequestLogService) flush() {
 	}
 }
 
-// writeLogsToDB writes a batch of request logs to the database
+// writeLogsToDB writes a batch of request logs to the database (优化版本)
 func (s *RequestLogService) writeLogsToDB(logs []*models.RequestLog) error {
 	if len(logs) == 0 {
 		return nil
 	}
 
+	start := time.Now()
+	defer func() {
+		logrus.WithFields(logrus.Fields{
+			"batch_size":    len(logs),
+			"operation_time": time.Since(start).Milliseconds(),
+		}).Debug("Log write operation completed")
+	}()
+
+	// 分批处理以减少事务压力
+	maxBatchSize := DefaultLogFlushBatchSize
+	for i := 0; i < len(logs); i += maxBatchSize {
+		end := i + maxBatchSize
+		if end > len(logs) {
+			end = len(logs)
+		}
+
+		batch := logs[i:end]
+		if err := s.writeBatchToDB(batch); err != nil {
+			return fmt.Errorf("failed to write batch %d-%d: %w", i, end-1, err)
+		}
+	}
+
+	return nil
+}
+
+// writeBatchToDB writes a smaller batch of logs to database
+func (s *RequestLogService) writeBatchToDB(logs []*models.RequestLog) error {
+	if len(logs) == 0 {
+		return nil
+	}
+
 	return s.db.Transaction(func(tx *gorm.DB) error {
+		// 1. 先插入日志记录
 		if err := tx.CreateInBatches(logs, len(logs)).Error; err != nil {
 			return fmt.Errorf("failed to batch insert request logs: %w", err)
 		}
 
-		keyStats := make(map[string]int64)
-		for _, log := range logs {
-			if log.IsSuccess && log.KeyHash != "" {
-				keyStats[log.KeyHash]++
-			}
+		// 2. 更新API密钥统计（简化处理）
+		if err := s.updateKeyStats(tx, logs); err != nil {
+			return fmt.Errorf("failed to update key stats: %w", err)
 		}
 
-		if len(keyStats) > 0 {
-			var caseStmt strings.Builder
-			var keyHashes []string
-			caseStmt.WriteString("CASE key_hash ")
-			for keyHash, count := range keyStats {
-				caseStmt.WriteString(fmt.Sprintf("WHEN '%s' THEN request_count + %d ", keyHash, count))
-				keyHashes = append(keyHashes, keyHash)
-			}
-			caseStmt.WriteString("END")
-
-			if err := tx.Model(&models.APIKey{}).Where("key_hash IN ?", keyHashes).
-				Updates(map[string]any{
-					"request_count": gorm.Expr(caseStmt.String()),
-					"last_used_at":  time.Now(),
-				}).Error; err != nil {
-				return fmt.Errorf("failed to batch update api_key stats: %w", err)
-			}
-		}
-
-		// 更新统计表
-		hourlyStats := make(map[struct {
-			Time    time.Time
-			GroupID uint
-		}]struct{ Success, Failure int64 })
-		for _, log := range logs {
-			if log.RequestType == models.RequestTypeRetry {
-				continue
-			}
-			hourlyTime := log.Timestamp.Truncate(time.Hour)
-			key := struct {
-				Time    time.Time
-				GroupID uint
-			}{Time: hourlyTime, GroupID: log.GroupID}
-
-			counts := hourlyStats[key]
-			if log.IsSuccess {
-				counts.Success++
-			} else {
-				counts.Failure++
-			}
-			hourlyStats[key] = counts
-
-			if log.ParentGroupID > 0 {
-				parentKey := struct {
-					Time    time.Time
-					GroupID uint
-				}{Time: hourlyTime, GroupID: log.ParentGroupID}
-
-				parentCounts := hourlyStats[parentKey]
-				if log.IsSuccess {
-					parentCounts.Success++
-				} else {
-					parentCounts.Failure++
-				}
-				hourlyStats[parentKey] = parentCounts
-			}
-		}
-
-		if len(hourlyStats) > 0 {
-			for key, counts := range hourlyStats {
-				err := tx.Clauses(clause.OnConflict{
-					Columns: []clause.Column{{Name: "time"}, {Name: "group_id"}},
-					DoUpdates: clause.Assignments(map[string]any{
-						"success_count": gorm.Expr("group_hourly_stats.success_count + ?", counts.Success),
-						"failure_count": gorm.Expr("group_hourly_stats.failure_count + ?", counts.Failure),
-						"updated_at":    time.Now(),
-					}),
-				}).Create(&models.GroupHourlyStat{
-					Time:         key.Time,
-					GroupID:      key.GroupID,
-					SuccessCount: counts.Success,
-					FailureCount: counts.Failure,
-				}).Error
-
-				if err != nil {
-					return fmt.Errorf("failed to upsert group hourly stat: %w", err)
-				}
-			}
+		// 3. 更新分组统计（简化处理）
+		if err := s.updateGroupStats(tx, logs); err != nil {
+			return fmt.Errorf("failed to update group stats: %w", err)
 		}
 
 		return nil
 	})
+}
+
+// updateKeyStats 更新密钥统计信息
+func (s *RequestLogService) updateKeyStats(tx *gorm.DB, logs []*models.RequestLog) error {
+	keyStats := make(map[string]int64)
+	for _, log := range logs {
+		if log.IsSuccess && log.KeyHash != "" {
+			keyStats[log.KeyHash]++
+		}
+	}
+
+	if len(keyStats) == 0 {
+		return nil
+	}
+
+	// 使用更简单的更新方式
+	for keyHash, count := range keyStats {
+		result := tx.Model(&models.APIKey{}).
+			Where("key_hash = ?", keyHash).
+			Updates(map[string]any{
+				"request_count": gorm.Expr("request_count + ?", count),
+				"last_used_at":  time.Now(),
+			})
+
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			logrus.WithField("key_hash", keyHash).Warn("No API key found for hash during stats update")
+		}
+	}
+
+	return nil
+}
+
+// updateGroupStats 更新分组统计信息
+func (s *RequestLogService) updateGroupStats(tx *gorm.DB, logs []*models.RequestLog) error {
+	// 按时间和分组ID聚合统计
+	hourlyStats := make(map[struct {
+		Time    time.Time
+		GroupID uint
+	}]struct{ Success, Failure int64 })
+
+	for _, log := range logs {
+		if log.RequestType == models.RequestTypeRetry {
+			continue
+		}
+
+		hourlyTime := log.Timestamp.Truncate(time.Hour)
+		key := struct {
+			Time    time.Time
+			GroupID uint
+		}{Time: hourlyTime, GroupID: log.GroupID}
+
+		counts := hourlyStats[key]
+		if log.IsSuccess {
+			counts.Success++
+		} else {
+			counts.Failure++
+		}
+		hourlyStats[key] = counts
+
+		// 处理父分组统计
+		if log.ParentGroupID > 0 {
+			parentKey := struct {
+				Time    time.Time
+				GroupID uint
+			}{Time: hourlyTime, GroupID: log.ParentGroupID}
+
+			parentCounts := hourlyStats[parentKey]
+			if log.IsSuccess {
+				parentCounts.Success++
+			} else {
+				parentCounts.Failure++
+			}
+			hourlyStats[parentKey] = parentCounts
+		}
+	}
+
+	// 批量更新统计表
+	if len(hourlyStats) > 0 {
+		for key, counts := range hourlyStats {
+			err := tx.Clauses(clause.OnConflict{
+				Columns: []clause.Column{{Name: "time"}, {Name: "group_id"}},
+				DoUpdates: clause.Assignments(map[string]any{
+					"success_count": gorm.Expr("group_hourly_stats.success_count + ?", counts.Success),
+					"failure_count": gorm.Expr("group_hourly_stats.failure_count + ?", counts.Failure),
+					"updated_at":    time.Now(),
+				}),
+			}).Create(&models.GroupHourlyStat{
+				Time:         key.Time,
+				GroupID:      key.GroupID,
+				SuccessCount: counts.Success,
+				FailureCount: counts.Failure,
+			}).Error
+
+			if err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
 }

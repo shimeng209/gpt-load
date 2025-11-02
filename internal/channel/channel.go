@@ -14,6 +14,11 @@ type ChannelProxy interface {
 	// BuildUpstreamURL constructs the target URL for the upstream service.
 	BuildUpstreamURL(originalURL *url.URL, groupName string) (string, error)
 
+	// BuildUpstreamURLForAggregate constructs the target URL for aggregate group sub-groups.
+	// It uses the validation endpoint instead of the request path to ensure compatibility
+	// with different upstream endpoints.
+	BuildUpstreamURLForAggregate(originalURL *url.URL, groupName string) (string, error)
+
 	// IsConfigStale checks if the channel's configuration is stale compared to the provided group.
 	IsConfigStale(group *models.Group) bool
 

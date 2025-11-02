@@ -86,7 +86,15 @@ func (s *LogService) logFiltersScope(c *gin.Context) func(db *gorm.DB) *gorm.DB 
 
 // GetLogsQuery returns a GORM query for fetching logs with filters.
 func (s *LogService) GetLogsQuery(c *gin.Context) *gorm.DB {
-	return s.DB.Model(&models.RequestLog{}).Scopes(s.logFiltersScope(c))
+	query := s.DB.Model(&models.RequestLog{}).Scopes(s.logFiltersScope(c))
+
+	// 处理 fields 参数，支持字段选择
+	if fields := c.Query("fields"); fields != "" {
+		// 解析字段列表，确保包含必要的字段
+		query = query.Select(fields)
+	}
+
+	return query
 }
 
 // StreamLogKeysToCSV fetches unique keys from logs based on filters and streams them as a CSV.

@@ -37,7 +37,9 @@ func newAnthropicChannel(f *Factory, group *models.Group) (ChannelProxy, error) 
 
 // ModifyRequest sets the required headers for the Anthropic API.
 func (ch *AnthropicChannel) ModifyRequest(req *http.Request, apiKey *models.APIKey, group *models.Group) {
-	req.Header.Set("x-api-key", apiKey.KeyValue)
+	if apiKey != nil {
+		req.Header.Set("x-api-key", apiKey.KeyValue)
+	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 }
 

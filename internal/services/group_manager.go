@@ -95,6 +95,36 @@ func (gm *GroupManager) Initialize() error {
 				}
 			}
 
+			// Parse model mappings for aggregate groups
+			if len(group.ModelMappings) > 0 {
+				if err := json.Unmarshal(group.ModelMappings, &g.ModelMappingList); err != nil {
+					logrus.WithError(err).WithField("group_name", g.Name).Warn("Failed to parse model mappings for group")
+					g.ModelMappingList = nil
+				}
+			} else {
+				g.ModelMappingList = nil
+			}
+
+			if len(g.ModelMappingList) > 0 && len(g.SubGroups) > 0 {
+				subGroupNameMap := make(map[uint]string, len(g.SubGroups))
+				for _, sg := range g.SubGroups {
+					name := sg.SubGroupName
+					if name == "" {
+						if subGroup, exists := groupByID[sg.SubGroupID]; exists {
+							name = subGroup.Name
+						}
+					}
+					subGroupNameMap[sg.SubGroupID] = name
+				}
+
+				for mi := range g.ModelMappingList {
+					for ti := range g.ModelMappingList[mi].Targets {
+						target := &g.ModelMappingList[mi].Targets[ti]
+						target.SubGroupName = subGroupNameMap[target.SubGroupID]
+					}
+				}
+			}
+
 			groupMap[g.Name] = &g
 			logrus.WithFields(logrus.Fields{
 				"group_name":         g.Name,

@@ -58,6 +58,16 @@ func NewAPIErrorWithUpstream(statusCode int, code string, upstreamMessage string
 	}
 }
 
+// NewValidationError creates a new validation error with a custom message.
+func NewValidationError(message string) *APIError {
+	return NewAPIError(ErrValidation, message)
+}
+
+// NewNotFoundError creates a new not found error with a custom message.
+func NewNotFoundError(message string) *APIError {
+	return NewAPIError(ErrResourceNotFound, message)
+}
+
 // ParseDBError intelligently converts a GORM error into a standard APIError.
 func ParseDBError(err error) *APIError {
 	if err == nil {

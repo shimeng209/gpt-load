@@ -2,11 +2,11 @@ package services
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 
 	app_errors "gpt-load/internal/errors"
 	"gpt-load/internal/models"
-	"gpt-load/internal/utils"
 
 	"github.com/sirupsen/logrus"
 	"gorm.io/gorm"
@@ -68,12 +68,9 @@ func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelTy
 	}
 
 	subGroupMap := make(map[uint]models.Group, len(subGroupModels))
-	var validationEndpoint string
 
-	// If there's an existing endpoint, use it as the expected endpoint
-	if existingEndpoint != "" {
-		validationEndpoint = existingEndpoint
-	}
+	// Note: Removed validation endpoint consistency check to allow different upstream endpoints
+	// Each sub-group can have its own endpoint defined in its configuration
 
 	for _, sg := range subGroupModels {
 		if sg.GroupType == "aggregate" {
@@ -83,12 +80,6 @@ func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelTy
 			return nil, NewI18nError(app_errors.ErrValidation, "validation.sub_group_channel_mismatch", nil)
 		}
 
-		// If no existing endpoint, use the first sub-group's effective endpoint
-		if validationEndpoint == "" {
-			validationEndpoint = utils.GetValidationEndpoint(&sg)
-		} else if validationEndpoint != utils.GetValidationEndpoint(&sg) {
-			return nil, NewI18nError(app_errors.ErrValidation, "validation.sub_group_validation_endpoint_mismatch", nil)
-		}
 		subGroupMap[sg.ID] = sg
 	}
 
@@ -104,7 +95,7 @@ func (s *AggregateGroupService) ValidateSubGroups(ctx context.Context, channelTy
 	}
 
 	return &AggregateValidationResult{
-		ValidationEndpoint: validationEndpoint,
+		ValidationEndpoint: "", // No longer using unified validation endpoint
 		SubGroups:          resultSubGroups,
 	}, nil
 }
@@ -183,22 +174,14 @@ func (s *AggregateGroupService) AddSubGroups(ctx context.Context, groupID uint, 
 		return NewI18nError(app_errors.ErrBadRequest, "group.not_aggregate", nil)
 	}
 
-	// Check if there are existing sub groups and get their validation endpoint
-	var existingEndpoint string
+	// Check for existing sub groups to prevent duplicates
 	var existingSubGroups []models.GroupSubGroup
 	if err := s.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&existingSubGroups).Error; err != nil {
 		return err
 	}
 
-	if len(existingSubGroups) > 0 {
-		var existingGroup models.Group
-		if err := s.db.WithContext(ctx).First(&existingGroup, existingSubGroups[0].SubGroupID).Error; err == nil {
-			existingEndpoint = utils.GetValidationEndpoint(&existingGroup)
-		}
-	}
-
-	// Validate sub groups with existing endpoint for consistency
-	result, err := s.ValidateSubGroups(ctx, group.ChannelType, inputs, existingEndpoint)
+	// Validate sub groups without endpoint consistency check
+	result, err := s.ValidateSubGroups(ctx, group.ChannelType, inputs, "")
 	if err != nil {
 		return err
 	}
@@ -318,6 +301,12 @@ func (s *AggregateGroupService) DeleteSubGroup(ctx context.Context, groupID, sub
 		return NewI18nError(app_errors.ErrResourceNotFound, "group.sub_group_not_found", nil)
 	}
 
+	// 清理模型映射中对已删除子分组的引用
+	if err := s.cleanupModelMappingsForDeletedSubGroup(ctx, groupID, subGroupID); err != nil {
+		logrus.WithContext(ctx).WithError(err).Error("failed to cleanup model mappings after deleting sub group")
+		// 不阻断删除操作，只记录错误
+	}
+
 	// 触发缓存更新
 	if err := s.groupManager.Invalidate(); err != nil {
 		logrus.WithContext(ctx).WithError(err).Error("failed to invalidate group cache after deleting sub group")
@@ -435,4 +424,93 @@ func (s *AggregateGroupService) fetchSubGroupsKeyStats(ctx context.Context, grou
 
 	wg.Wait()
 	return results
+}
+
+// cleanupModelMappingsForDeletedSubGroup 清理模型映射中对已删除子分组的引用
+func (s *AggregateGroupService) cleanupModelMappingsForDeletedSubGroup(ctx context.Context, groupID, deletedSubGroupID uint) error {
+	// 获取聚合分组的当前模型映射
+	var group models.Group
+	if err := s.db.WithContext(ctx).Select("model_mappings").First(&group, groupID).Error; err != nil {
+		return err
+	}
+
+	// 如果没有模型映射，直接返回
+	if len(group.ModelMappings) == 0 {
+		return nil
+	}
+
+	// 解析模型映射
+	var modelMappings []models.ModelMapping
+	if err := json.Unmarshal(group.ModelMappings, &modelMappings); err != nil {
+		logrus.WithContext(ctx).WithError(err).
+			WithField("group_id", groupID).
+			Warn("failed to unmarshal model mappings, skipping cleanup")
+		return nil // 不阻断删除操作
+	}
+
+	// 标记是否有变更
+	hasChanges := false
+	cleanedMappings := make([]models.ModelMapping, 0, len(modelMappings))
+
+	// 遍历每个模型映射
+	for _, mapping := range modelMappings {
+		cleanedTargets := make([]models.ModelMappingTarget, 0, len(mapping.Targets))
+
+		// 遍历每个目标，移除已删除的子分组
+		for _, target := range mapping.Targets {
+			if target.SubGroupID != deletedSubGroupID {
+				cleanedTargets = append(cleanedTargets, target)
+			} else {
+				hasChanges = true
+				logrus.WithContext(ctx).
+					WithFields(logrus.Fields{
+						"group_id":       groupID,
+						"model_alias":    mapping.Model,
+						"deleted_sub_group_id": deletedSubGroupID,
+					}).
+					Info("removed invalid sub-group reference from model mapping")
+			}
+		}
+
+		// 如果清理后还有目标，保留该映射
+		if len(cleanedTargets) > 0 {
+			mapping.Targets = cleanedTargets
+			cleanedMappings = append(cleanedMappings, mapping)
+		} else {
+			// 如果没有目标了，移除整个映射
+			hasChanges = true
+			logrus.WithContext(ctx).
+				WithFields(logrus.Fields{
+					"group_id":    groupID,
+					"model_alias": mapping.Model,
+				}).
+				Info("removed entire model mapping due to no valid targets")
+		}
+	}
+
+	// 如果有变更，更新数据库
+	if hasChanges {
+		cleanedJSON, err := json.Marshal(cleanedMappings)
+		if err != nil {
+			return err
+		}
+
+		if err := s.db.WithContext(ctx).
+			Model(&models.Group{}).
+			Where("id = ?", groupID).
+			Update("model_mappings", cleanedJSON).Error; err != nil {
+			return err
+		}
+
+		logrus.WithContext(ctx).
+			WithFields(logrus.Fields{
+				"group_id":             groupID,
+				"deleted_sub_group_id": deletedSubGroupID,
+				"mappings_before":      len(modelMappings),
+				"mappings_after":       len(cleanedMappings),
+			}).
+			Info("successfully cleaned up model mappings after sub-group deletion")
+	}
+
+	return nil
 }

@@ -157,6 +157,7 @@ func registerProtectedAPIRoutes(api *gin.RouterGroup, serverHandler *handler.Ser
 	logs := api.Group("/logs")
 	{
 		logs.GET("", serverHandler.GetLogs)
+		logs.GET("/:id", serverHandler.GetLogDetail)
 		logs.GET("/export", serverHandler.ExportLogs)
 	}
 

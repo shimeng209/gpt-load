@@ -1,8 +1,6 @@
 module gpt-load
 
-go 1.23.0
-
-toolchain go1.24.3
+go 1.25.2
 
 require (
 	github.com/gin-contrib/gzip v1.2.3

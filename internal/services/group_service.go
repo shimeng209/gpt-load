@@ -82,6 +82,19 @@ func NewGroupService(
 	}
 }
 
+// ModelMappingTargetInput captures a single target group in a model alias mapping.
+type ModelMappingTargetInput struct {
+	SubGroupID uint   `json:"sub_group_id"`
+	Weight     int    `json:"weight"`
+	Model      string `json:"model"`
+}
+
+// ModelMappingInput captures the mapping between a model alias and its candidate sub-groups.
+type ModelMappingInput struct {
+	Model   string                    `json:"model"`
+	Targets []ModelMappingTargetInput `json:"targets"`
+}
+
 // GroupCreateParams captures all fields required to create a group.
 type GroupCreateParams struct {
 	Name               string
@@ -98,6 +111,7 @@ type GroupCreateParams struct {
 	HeaderRules        []models.HeaderRule
 	ProxyKeys          string
 	SubGroups          []SubGroupInput
+	ModelMappings      []ModelMappingInput
 }
 
 // GroupUpdateParams captures updatable fields for a group.
@@ -118,6 +132,7 @@ type GroupUpdateParams struct {
 	HeaderRules        *[]models.HeaderRule
 	ProxyKeys          *string
 	SubGroups          *[]SubGroupInput
+	ModelMappings      *[]ModelMappingInput
 }
 
 // KeyStats captures aggregated API key statistics for a group.
@@ -210,6 +225,13 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 		headerRulesJSON = datatypes.JSON("[]")
 	}
 
+	if len(params.ModelMappings) > 0 && groupType != "aggregate" {
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_only_for_aggregate", nil)
+	}
+	if len(params.ModelMappings) > 0 && groupType == "aggregate" {
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_requires_sub_groups", nil)
+	}
+
 	group := models.Group{
 		Name:               name,
 		DisplayName:        strings.TrimSpace(params.DisplayName),
@@ -224,6 +246,7 @@ func (s *GroupService) CreateGroup(ctx context.Context, params GroupCreateParams
 		Config:             cleanedConfig,
 		HeaderRules:        headerRulesJSON,
 		ProxyKeys:          strings.TrimSpace(params.ProxyKeys),
+		ModelMappings:      datatypes.JSON("[]"),
 	}
 
 	tx := s.db.WithContext(ctx).Begin()
@@ -367,6 +390,21 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 		group.ProxyKeys = strings.TrimSpace(*params.ProxyKeys)
 	}
 
+	if params.ModelMappings != nil {
+		if group.GroupType != "aggregate" {
+			if len(*params.ModelMappings) > 0 {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_only_for_aggregate", nil)
+			}
+			group.ModelMappings = datatypes.JSON("[]")
+		} else {
+			modelMappingsJSON, err := s.normalizeModelMappings(ctx, group.ID, *params.ModelMappings)
+			if err != nil {
+				return nil, err
+			}
+			group.ModelMappings = modelMappingsJSON
+		}
+	}
+
 	if params.HeaderRules != nil {
 		headerRulesJSON, err := s.normalizeHeaderRules(*params.HeaderRules)
 		if err != nil {
@@ -391,6 +429,91 @@ func (s *GroupService) UpdateGroup(ctx context.Context, id uint, params GroupUpd
 	}
 
 	return &group, nil
+}
+
+func (s *GroupService) normalizeModelMappings(ctx context.Context, groupID uint, inputs []ModelMappingInput) (datatypes.JSON, error) {
+	if len(inputs) == 0 {
+		return datatypes.JSON("[]"), nil
+	}
+
+	var subGroups []models.GroupSubGroup
+	if err := s.db.WithContext(ctx).Where("group_id = ?", groupID).Find(&subGroups).Error; err != nil {
+		return nil, app_errors.ParseDBError(err)
+	}
+	if len(subGroups) == 0 {
+		return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_requires_sub_groups", nil)
+	}
+
+	subGroupMap := make(map[uint]struct{}, len(subGroups))
+	for _, sg := range subGroups {
+		subGroupMap[sg.SubGroupID] = struct{}{}
+	}
+
+	result := make([]models.ModelMapping, 0, len(inputs))
+	aliasSet := make(map[string]struct{}, len(inputs))
+
+	for _, mapping := range inputs {
+		alias := strings.TrimSpace(mapping.Model)
+		if alias == "" {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_alias_required", nil)
+		}
+		lowerAlias := strings.ToLower(alias)
+		if _, exists := aliasSet[lowerAlias]; exists {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_duplicate_alias", map[string]any{"model": alias})
+		}
+
+		if len(mapping.Targets) == 0 {
+			return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_targets_required", map[string]any{"model": alias})
+		}
+
+		normalizedTargets := make([]models.ModelMappingTarget, 0, len(mapping.Targets))
+		// 检查"子分组 + 实际模型"组合的重复
+		targetSet := make(map[string]struct{}, len(mapping.Targets))
+		for _, target := range mapping.Targets {
+			if _, ok := subGroupMap[target.SubGroupID]; !ok {
+				// 记录警告但不阻止保存，允许用户通过编辑来修复无效引用
+				logrus.WithContext(ctx).WithFields(logrus.Fields{
+					"group_id":       groupID,
+					"model_alias":    alias,
+					"invalid_sub_group_id": target.SubGroupID,
+				}).Warn("Model mapping target references invalid sub-group, allowing save for manual fix")
+			}
+			if target.Weight < 0 {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_invalid_weight",
+					map[string]any{"model": alias, "sub_group_id": target.SubGroupID})
+			}
+			modelName := strings.TrimSpace(target.Model)
+			if modelName == "" {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_target_model_required",
+					map[string]any{"model": alias})
+			}
+			// 检查"子分组ID + 实际模型"组合是否重复
+			compositeKey := fmt.Sprintf("%d:%s", target.SubGroupID, strings.ToLower(modelName))
+			if _, duplicated := targetSet[compositeKey]; duplicated {
+				return nil, NewI18nError(app_errors.ErrValidation, "validation.model_mapping_duplicate_target",
+					map[string]any{"model": alias})
+			}
+			normalizedTargets = append(normalizedTargets, models.ModelMappingTarget{
+				SubGroupID: target.SubGroupID,
+				Weight:     target.Weight,
+				Model:      modelName,
+			})
+			targetSet[compositeKey] = struct{}{}
+		}
+
+		result = append(result, models.ModelMapping{
+			Model:   alias,
+			Targets: normalizedTargets,
+		})
+		aliasSet[lowerAlias] = struct{}{}
+	}
+
+	bytes, err := json.Marshal(result)
+	if err != nil {
+		return nil, app_errors.NewAPIError(app_errors.ErrInternalServer, fmt.Sprintf("failed to marshal model mappings: %v", err))
+	}
+
+	return datatypes.JSON(bytes), nil
 }
 
 // DeleteGroup removes a group and associated resources.

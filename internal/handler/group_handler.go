@@ -43,21 +43,33 @@ func (s *Server) handleGroupError(c *gin.Context, err error) bool {
 	return true
 }
 
+type ModelMappingTargetRequest struct {
+	SubGroupID uint   `json:"sub_group_id"`
+	Weight     int    `json:"weight"`
+	Model      string `json:"model"`
+}
+
+type ModelMappingRequest struct {
+	Model   string                      `json:"model"`
+	Targets []ModelMappingTargetRequest `json:"targets"`
+}
+
 // GroupCreateRequest defines the payload for creating a group.
 type GroupCreateRequest struct {
-	Name               string              `json:"name"`
-	DisplayName        string              `json:"display_name"`
-	Description        string              `json:"description"`
-	GroupType          string              `json:"group_type"` // 'standard' or 'aggregate'
-	Upstreams          json.RawMessage     `json:"upstreams"`
-	ChannelType        string              `json:"channel_type"`
-	Sort               int                 `json:"sort"`
-	TestModel          string              `json:"test_model"`
-	ValidationEndpoint string              `json:"validation_endpoint"`
-	ParamOverrides     map[string]any      `json:"param_overrides"`
-	Config             map[string]any      `json:"config"`
-	HeaderRules        []models.HeaderRule `json:"header_rules"`
-	ProxyKeys          string              `json:"proxy_keys"`
+	Name               string                `json:"name"`
+	DisplayName        string                `json:"display_name"`
+	Description        string                `json:"description"`
+	GroupType          string                `json:"group_type"` // 'standard' or 'aggregate'
+	Upstreams          json.RawMessage       `json:"upstreams"`
+	ChannelType        string                `json:"channel_type"`
+	Sort               int                   `json:"sort"`
+	TestModel          string                `json:"test_model"`
+	ValidationEndpoint string                `json:"validation_endpoint"`
+	ParamOverrides     map[string]any        `json:"param_overrides"`
+	Config             map[string]any        `json:"config"`
+	HeaderRules        []models.HeaderRule   `json:"header_rules"`
+	ProxyKeys          string                `json:"proxy_keys"`
+	ModelMappings      []ModelMappingRequest `json:"model_mappings"`
 }
 
 // CreateGroup handles the creation of a new group.
@@ -82,6 +94,7 @@ func (s *Server) CreateGroup(c *gin.Context) {
 		Config:             req.Config,
 		HeaderRules:        req.HeaderRules,
 		ProxyKeys:          req.ProxyKeys,
+		ModelMappings:      convertModelMappings(req.ModelMappings),
 	}
 
 	group, err := s.GroupService.CreateGroup(c.Request.Context(), params)
@@ -110,19 +123,20 @@ func (s *Server) ListGroups(c *gin.Context) {
 // GroupUpdateRequest defines the payload for updating a group.
 // Using a dedicated struct avoids issues with zero values being ignored by GORM's Update.
 type GroupUpdateRequest struct {
-	Name               *string             `json:"name,omitempty"`
-	DisplayName        *string             `json:"display_name,omitempty"`
-	Description        *string             `json:"description,omitempty"`
-	GroupType          *string             `json:"group_type,omitempty"`
-	Upstreams          json.RawMessage     `json:"upstreams"`
-	ChannelType        *string             `json:"channel_type,omitempty"`
-	Sort               *int                `json:"sort"`
-	TestModel          string              `json:"test_model"`
-	ValidationEndpoint *string             `json:"validation_endpoint,omitempty"`
-	ParamOverrides     map[string]any      `json:"param_overrides"`
-	Config             map[string]any      `json:"config"`
-	HeaderRules        []models.HeaderRule `json:"header_rules"`
-	ProxyKeys          *string             `json:"proxy_keys,omitempty"`
+	Name               *string                `json:"name,omitempty"`
+	DisplayName        *string                `json:"display_name,omitempty"`
+	Description        *string                `json:"description,omitempty"`
+	GroupType          *string                `json:"group_type,omitempty"`
+	Upstreams          json.RawMessage        `json:"upstreams"`
+	ChannelType        *string                `json:"channel_type,omitempty"`
+	Sort               *int                   `json:"sort"`
+	TestModel          string                 `json:"test_model"`
+	ValidationEndpoint *string                `json:"validation_endpoint,omitempty"`
+	ParamOverrides     map[string]any         `json:"param_overrides"`
+	Config             map[string]any         `json:"config"`
+	HeaderRules        []models.HeaderRule    `json:"header_rules"`
+	ProxyKeys          *string                `json:"proxy_keys,omitempty"`
+	ModelMappings      *[]ModelMappingRequest `json:"model_mappings"`
 }
 
 // UpdateGroup handles updating an existing group.
@@ -167,6 +181,11 @@ func (s *Server) UpdateGroup(c *gin.Context) {
 		params.HeaderRules = &rules
 	}
 
+	if req.ModelMappings != nil {
+		mappings := convertModelMappings(*req.ModelMappings)
+		params.ModelMappings = &mappings
+	}
+
 	group, err := s.GroupService.UpdateGroup(c.Request.Context(), uint(id), params)
 	if s.handleGroupError(c, err) {
 		return
@@ -177,24 +196,25 @@ func (s *Server) UpdateGroup(c *gin.Context) {
 
 // GroupResponse defines the structure for a group response, excluding sensitive or large fields.
 type GroupResponse struct {
-	ID                 uint                `json:"id"`
-	Name               string              `json:"name"`
-	Endpoint           string              `json:"endpoint"`
-	DisplayName        string              `json:"display_name"`
-	Description        string              `json:"description"`
-	GroupType          string              `json:"group_type"`
-	Upstreams          datatypes.JSON      `json:"upstreams"`
-	ChannelType        string              `json:"channel_type"`
-	Sort               int                 `json:"sort"`
-	TestModel          string              `json:"test_model"`
-	ValidationEndpoint string              `json:"validation_endpoint"`
-	ParamOverrides     datatypes.JSONMap   `json:"param_overrides"`
-	Config             datatypes.JSONMap   `json:"config"`
-	HeaderRules        []models.HeaderRule `json:"header_rules"`
-	ProxyKeys          string              `json:"proxy_keys"`
-	LastValidatedAt    *time.Time          `json:"last_validated_at"`
-	CreatedAt          time.Time           `json:"created_at"`
-	UpdatedAt          time.Time           `json:"updated_at"`
+	ID                 uint                  `json:"id"`
+	Name               string                `json:"name"`
+	Endpoint           string                `json:"endpoint"`
+	DisplayName        string                `json:"display_name"`
+	Description        string                `json:"description"`
+	GroupType          string                `json:"group_type"`
+	Upstreams          datatypes.JSON        `json:"upstreams"`
+	ChannelType        string                `json:"channel_type"`
+	Sort               int                   `json:"sort"`
+	TestModel          string                `json:"test_model"`
+	ValidationEndpoint string                `json:"validation_endpoint"`
+	ParamOverrides     datatypes.JSONMap     `json:"param_overrides"`
+	Config             datatypes.JSONMap     `json:"config"`
+	HeaderRules        []models.HeaderRule   `json:"header_rules"`
+	ProxyKeys          string                `json:"proxy_keys"`
+	ModelMappings      []models.ModelMapping `json:"model_mappings"`
+	LastValidatedAt    *time.Time            `json:"last_validated_at"`
+	CreatedAt          time.Time             `json:"created_at"`
+	UpdatedAt          time.Time             `json:"updated_at"`
 }
 
 // newGroupResponse creates a new GroupResponse from a models.Group.
@@ -218,6 +238,14 @@ func (s *Server) newGroupResponse(group *models.Group) *GroupResponse {
 		}
 	}
 
+	var modelMappings []models.ModelMapping
+	if len(group.ModelMappings) > 0 {
+		if err := json.Unmarshal(group.ModelMappings, &modelMappings); err != nil {
+			logrus.WithError(err).Error("Failed to unmarshal model mappings")
+			modelMappings = make([]models.ModelMapping, 0)
+		}
+	}
+
 	return &GroupResponse{
 		ID:                 group.ID,
 		Name:               group.Name,
@@ -234,10 +262,35 @@ func (s *Server) newGroupResponse(group *models.Group) *GroupResponse {
 		Config:             group.Config,
 		HeaderRules:        headerRules,
 		ProxyKeys:          group.ProxyKeys,
+		ModelMappings:      modelMappings,
 		LastValidatedAt:    group.LastValidatedAt,
 		CreatedAt:          group.CreatedAt,
 		UpdatedAt:          group.UpdatedAt,
 	}
+}
+
+func convertModelMappings(requests []ModelMappingRequest) []services.ModelMappingInput {
+	if len(requests) == 0 {
+		return nil
+	}
+
+	result := make([]services.ModelMappingInput, 0, len(requests))
+	for _, req := range requests {
+		targets := make([]services.ModelMappingTargetInput, 0, len(req.Targets))
+		for _, target := range req.Targets {
+			targets = append(targets, services.ModelMappingTargetInput{
+				SubGroupID: target.SubGroupID,
+				Weight:     target.Weight,
+				Model:      target.Model,
+			})
+		}
+		result = append(result, services.ModelMappingInput{
+			Model:   req.Model,
+			Targets: targets,
+		})
+	}
+
+	return result
 }
 
 // DeleteGroup handles deleting a group.

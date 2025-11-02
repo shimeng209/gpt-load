@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"gpt-load/internal/channel"
@@ -68,24 +70,43 @@ func (ps *ProxyServer) HandleProxy(c *gin.Context) {
 		return
 	}
 
+	
+	bodyBytes, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		logrus.Errorf("Failed to read request body: %v", err)
+		response.Error(c, app_errors.NewAPIError(app_errors.ErrBadRequest, "Failed to read request body"))
+		return
+	}
+	c.Request.Body.Close()
+	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+
+	requestModel := extractModelFromBody(bodyBytes)
+
 	// Select sub-group if this is an aggregate group
-	subGroupName, err := ps.subGroupManager.SelectSubGroup(originalGroup)
+	selection, err := ps.subGroupManager.SelectSubGroup(originalGroup, requestModel)
 	if err != nil {
 		logrus.WithFields(logrus.Fields{
 			"aggregate_group": originalGroup.Name,
 			"error":           err,
+			"model":           requestModel,
 		}).Error("Failed to select sub-group from aggregate")
 		response.Error(c, app_errors.NewAPIError(app_errors.ErrNoKeysAvailable, "No available sub-groups"))
 		return
 	}
 
 	group := originalGroup
-	if subGroupName != "" {
-		group, err = ps.groupManager.GetGroupByName(subGroupName)
+	if selection != nil && selection.GroupName != "" {
+		group, err = ps.groupManager.GetGroupByName(selection.GroupName)
 		if err != nil {
 			response.Error(c, app_errors.ParseDBError(err))
 			return
 		}
+	}
+
+	// Special handling for aggregate groups' /v1/models requests
+	if originalGroup.GroupType == "aggregate" && ps.isModelsRequest(c.Request.URL.Path) {
+		ps.handleAggregateModelsRequest(c, originalGroup)
+		return
 	}
 
 	channelHandler, err := ps.channelFactory.GetChannel(group)
@@ -94,23 +115,53 @@ func (ps *ProxyServer) HandleProxy(c *gin.Context) {
 		return
 	}
 
-	bodyBytes, err := io.ReadAll(c.Request.Body)
-	if err != nil {
-		logrus.Errorf("Failed to read request body: %v", err)
-		response.Error(c, app_errors.NewAPIError(app_errors.ErrBadRequest, "Failed to read request body"))
-		return
-	}
-	c.Request.Body.Close()
-
 	finalBodyBytes, err := ps.applyParamOverrides(bodyBytes, group)
 	if err != nil {
 		response.Error(c, app_errors.NewAPIError(app_errors.ErrInternalServer, fmt.Sprintf("Failed to apply parameter overrides: %v", err)))
 		return
 	}
 
+	if selection != nil && selection.ModelOverride != "" && len(finalBodyBytes) > 0 {
+		overriddenBody, overrideErr := overrideModelInBody(finalBodyBytes, selection.ModelOverride)
+		if overrideErr != nil {
+			response.Error(c, app_errors.NewAPIError(app_errors.ErrInternalServer, fmt.Sprintf("Failed to apply model override: %v", overrideErr)))
+			return
+		}
+		finalBodyBytes = overriddenBody
+	}
+
+	bodyBytes = finalBodyBytes
 	isStream := channelHandler.IsStreamRequest(c, bodyBytes)
 
 	ps.executeRequestWithRetry(c, channelHandler, originalGroup, group, finalBodyBytes, isStream, startTime, 0)
+}
+
+
+func extractModelFromBody(bodyBytes []byte) string {
+	if len(bodyBytes) == 0 {
+		return ""
+	}
+	var payload struct {
+		Model string `json:"model"`
+	}
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(payload.Model)
+}
+
+func overrideModelInBody(bodyBytes []byte, model string) ([]byte, error) {
+	if len(bodyBytes) == 0 || strings.TrimSpace(model) == "" {
+		return bodyBytes, nil
+	}
+
+	var payload map[string]any
+	if err := json.Unmarshal(bodyBytes, &payload); err != nil {
+		return nil, err
+	}
+	payload["model"] = model
+
+	return json.Marshal(payload)
 }
 
 // executeRequestWithRetry is the core recursive function for handling requests and retries.
@@ -134,7 +185,16 @@ func (ps *ProxyServer) executeRequestWithRetry(
 		return
 	}
 
-	upstreamURL, err := channelHandler.BuildUpstreamURL(c.Request.URL, originalGroup.Name)
+	var upstreamURL string
+	// Use different URL building method for aggregate groups
+	if originalGroup.GroupType == "aggregate" && originalGroup.ID != group.ID {
+		// This is a sub-group of an aggregate group, use validation endpoint
+		upstreamURL, err = channelHandler.BuildUpstreamURLForAggregate(c.Request.URL, originalGroup.Name)
+	} else {
+		// Standard URL building for non-aggregate groups
+		upstreamURL, err = channelHandler.BuildUpstreamURL(c.Request.URL, originalGroup.Name)
+	}
+
 	if err != nil {
 		response.Error(c, app_errors.NewAPIError(app_errors.ErrInternalServer, fmt.Sprintf("Failed to build upstream URL: %v", err)))
 		return
@@ -338,3 +398,228 @@ func (ps *ProxyServer) logRequest(
 		logrus.Errorf("Failed to record request log: %v", err)
 	}
 }
+
+// isModelsRequest checks if the request is for /v1/models endpoint
+func (ps *ProxyServer) isModelsRequest(path string) bool {
+	return strings.HasSuffix(path, "/v1/models")
+}
+
+// handleAggregateModelsRequest handles /v1/models requests for aggregate groups
+func (ps *ProxyServer) handleAggregateModelsRequest(c *gin.Context, aggregateGroup *models.Group) {
+	// Collect all models with deduplication
+	allModels := make(map[string]bool)
+	modelList := []string{}
+
+	// Get client UserAgent for upstream requests
+	clientUserAgent := c.GetHeader("User-Agent")
+	if clientUserAgent == "" {
+		clientUserAgent = "claude-cli/2.0.10 (external, cli)"
+	}
+
+	// 1. Fetch upstream models from all sub-groups
+	upstreamModels := ps.fetchModelsFromAllSubGroups(aggregateGroup, clientUserAgent)
+	for _, model := range upstreamModels {
+		if model != "" && model != "-" && !allModels[model] {
+			modelList = append(modelList, model)
+			allModels[model] = true
+		}
+	}
+
+	// 2. Add model aliases at the front (priority)
+	if len(aggregateGroup.ModelMappingList) > 0 {
+		aliasModels := []string{}
+		for _, mapping := range aggregateGroup.ModelMappingList {
+			if mapping.Model != "" && mapping.Model != "-" && !allModels[mapping.Model] {
+				aliasModels = append(aliasModels, mapping.Model)
+				allModels[mapping.Model] = true
+			}
+		}
+		// Insert alias models at the front for priority
+		modelList = append(aliasModels, modelList...)
+	}
+
+	// 3. If no models from upstream and no aliases, add test model as fallback
+	if len(modelList) == 0 && aggregateGroup.TestModel != "" && aggregateGroup.TestModel != "-" {
+		modelList = append(modelList, aggregateGroup.TestModel)
+		allModels[aggregateGroup.TestModel] = true
+		logrus.WithField("group_name", aggregateGroup.Name).Info("Using test model as fallback for aggregate group")
+	}
+
+	// Build standard OpenAI response
+	models := make([]map[string]interface{}, len(modelList))
+	for i, model := range modelList {
+		models[i] = map[string]interface{}{
+			"id":         model,
+			"object":     "model",
+			"created":    time.Now().Unix(),
+			"owned_by":   ps.getModelProviderForAggregate(model, aggregateGroup),
+		}
+	}
+
+	response := map[string]interface{}{
+		"object": "list",
+		"data":   models,
+	}
+
+	c.JSON(http.StatusOK, response)
+}
+
+// fetchModelsFromAllSubGroups fetches models from all sub-groups of an aggregate group
+func (ps *ProxyServer) fetchModelsFromAllSubGroups(aggregateGroup *models.Group, userAgent string) []string {
+	if len(aggregateGroup.SubGroups) == 0 {
+		return []string{}
+	}
+
+	type result struct {
+		models []string
+		err    error
+	}
+
+	results := make(chan result, len(aggregateGroup.SubGroups))
+
+	// Start concurrent requests for each sub-group
+	for _, subGroup := range aggregateGroup.SubGroups {
+		go func(sg models.GroupSubGroup) {
+			subGroupModel, err := ps.groupManager.GetGroupByName(sg.SubGroupName)
+			if err != nil {
+				logrus.WithFields(logrus.Fields{
+					"aggregate_group": aggregateGroup.Name,
+					"sub_group":       sg.SubGroupName,
+					"error":           err,
+				}).Warn("Failed to get sub-group for models fetch")
+				results <- result{nil, err}
+				return
+			}
+
+			models, err := ps.fetchUpstreamModelsWithKey(subGroupModel, userAgent)
+			results <- result{models, err}
+		}(subGroup)
+	}
+
+	// Collect and merge results
+	allModels := make(map[string]bool)
+	modelList := []string{}
+
+	for i := 0; i < len(aggregateGroup.SubGroups); i++ {
+		res := <-results
+		if res.err != nil {
+			logrus.WithFields(logrus.Fields{
+				"aggregate_group": aggregateGroup.Name,
+				"error":           res.err,
+			}).Debug("Failed to fetch models from sub-group")
+			continue
+		}
+
+		for _, model := range res.models {
+			if model != "" && model != "-" && !allModels[model] {
+				modelList = append(modelList, model)
+				allModels[model] = true
+			}
+		}
+	}
+
+	return modelList
+}
+
+// fetchUpstreamModelsWithKey fetches models from upstream using sub-group's key
+func (ps *ProxyServer) fetchUpstreamModelsWithKey(group *models.Group, userAgent string) ([]string, error) {
+	channelHandler, err := ps.channelFactory.GetChannel(group)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get a key from this sub-group
+	apiKey, err := ps.keyProvider.SelectKey(group.ID)
+	if err != nil {
+		return nil, fmt.Errorf("no available keys for sub-group '%s'", group.Name)
+	}
+
+	// Build upstream URL for models endpoint
+	modelsURL, err := ps.buildModelsURLForGroup(group)
+	if err != nil {
+		return nil, err
+	}
+
+	// Create request with timeout
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, "GET", modelsURL, nil)
+	if err != nil {
+		return nil, err
+	}
+
+	// Set headers with client UserAgent
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", userAgent)
+
+	// Modify request using the sub-group's key
+	channelHandler.ModifyRequest(req, apiKey, group)
+
+	// Make request with optimized client
+	client := &http.Client{
+		Timeout: 5 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			IdleConnTimeout:     30 * time.Second,
+			DisableCompression:  false,
+		},
+	}
+
+	resp, err := client.Do(req)
+	if resp != nil {
+		defer resp.Body.Close()
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("upstream returned status %d", resp.StatusCode)
+	}
+
+	// Parse response
+	var upstreamResponse struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+
+	if err := json.NewDecoder(resp.Body).Decode(&upstreamResponse); err != nil {
+		return nil, err
+	}
+
+	models := make([]string, len(upstreamResponse.Data))
+	for i, model := range upstreamResponse.Data {
+		models[i] = model.ID
+	}
+
+	return models, nil
+}
+
+// buildModelsURLForGroup builds the upstream URL for models endpoint for a specific group
+func (ps *ProxyServer) buildModelsURLForGroup(group *models.Group) (string, error) {
+	channelHandler, err := ps.channelFactory.GetChannel(group)
+	if err != nil {
+		return "", err
+	}
+
+	// Create a mock URL for /v1/models
+	mockURL, _ := url.Parse("http://localhost/v1/models")
+	mockURL.Path = "/v1/models"
+
+	upstreamURL, err := channelHandler.BuildUpstreamURL(mockURL, group.Name)
+	if err != nil {
+		return "", err
+	}
+
+	return upstreamURL, nil
+}
+
+// getModelProviderForAggregate determines the provider for a model in aggregate groups
+func (ps *ProxyServer) getModelProviderForAggregate(model string, group *models.Group) string {
+	// For aggregate groups, we'll use a generic provider name
+	return "gpt-load-aggregate"
+}
+
