@@ -39,4 +39,7 @@ type ChannelProxy interface {
 
 	// ValidateKey checks if the given API key is valid.
 	ValidateKey(ctx context.Context, apiKey *models.APIKey, group *models.Group) (bool, error)
+
+	// ValidateKeyWithModel checks if the given API key is valid using a specific model.
+	ValidateKeyWithModel(ctx context.Context, apiKey *models.APIKey, group *models.Group, model string) (bool, error)
 }

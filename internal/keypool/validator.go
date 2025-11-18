@@ -88,8 +88,54 @@ func (s *KeyValidator) ValidateSingleKey(key *models.APIKey, group *models.Group
 	return true, nil
 }
 
+// ValidateSingleKeyWithModel performs a validation check on a single API key using a specific model.
+func (s *KeyValidator) ValidateSingleKeyWithModel(key *models.APIKey, group *models.Group, model string) (bool, error) {
+	if group.EffectiveConfig.AppUrl == "" {
+		group.EffectiveConfig = s.SettingsManager.GetEffectiveConfig(group.Config)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(group.EffectiveConfig.KeyValidationTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	ch, err := s.channelFactory.GetChannel(group)
+	if err != nil {
+		return false, fmt.Errorf("failed to get channel for group %s: %w", group.Name, err)
+	}
+
+	// If no model specified, fall back to the original ValidateSingleKey method
+	if model == "" {
+		return s.ValidateSingleKey(key, group)
+	}
+
+	isValid, validationErr := ch.ValidateKeyWithModel(ctx, key, group, model)
+
+	var errorMsg string
+	if !isValid && validationErr != nil {
+		errorMsg = validationErr.Error()
+	}
+	s.keypoolProvider.UpdateStatus(key, group, isValid, errorMsg)
+
+	if !isValid {
+		logrus.WithFields(logrus.Fields{
+			"error":    validationErr,
+			"key_id":   key.ID,
+			"group_id": group.ID,
+			"model":    model,
+		}).Debug("Key validation failed")
+		return false, validationErr
+	}
+
+	logrus.WithFields(logrus.Fields{
+		"key_id":   key.ID,
+		"group_id": group.ID,
+		"model":    model,
+		"is_valid": isValid,
+	}).Debug("Key validation successful")
+
+	return true, nil
+}
+
 // TestMultipleKeys performs a synchronous validation for a list of key values within a specific group.
-func (s *KeyValidator) TestMultipleKeys(group *models.Group, keyValues []string) ([]KeyTestResult, error) {
+func (s *KeyValidator) TestMultipleKeys(group *models.Group, keyValues []string, model string) ([]KeyTestResult, error) {
 	results := make([]KeyTestResult, len(keyValues))
 
 	// Generate hashes for all key values
@@ -130,7 +176,7 @@ func (s *KeyValidator) TestMultipleKeys(group *models.Group, keyValues []string)
 
 		apiKey.KeyValue = kv
 
-		isValid, validationErr := s.ValidateSingleKey(&apiKey, group)
+		isValid, validationErr := s.ValidateSingleKeyWithModel(&apiKey, group, model)
 
 		results[i] = KeyTestResult{
 			KeyValue: kv,

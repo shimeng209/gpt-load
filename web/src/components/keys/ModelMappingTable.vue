@@ -261,8 +261,8 @@ async function testSubGroupModel(target: ModelMappingTarget, mapping: ModelMappi
     // 随机选择一个密钥进行测试
     const randomKey = keysResponse.items[Math.floor(Math.random() * keysResponse.items.length)];
 
-    // 调用与密钥测试相同的API
-    const response = await keysApi.testKeys(target.sub_group_id, randomKey.key_value);
+    // 调用与密钥测试相同的API，传递实际的模型名称
+    const response = await keysApi.testKeys(target.sub_group_id, randomKey.key_value, target.model);
     const curValid = response.results?.[0] || {};
 
     loadingMessage.destroy();

@@ -62,6 +62,7 @@ func (s *Server) findGroupByID(c *gin.Context, groupID uint) (*models.Group, boo
 type KeyTextRequest struct {
 	GroupID  uint   `json:"group_id" binding:"required"`
 	KeysText string `json:"keys_text" binding:"required"`
+	Model    string `json:"model,omitempty"` // Optional model to test
 }
 
 // GroupIDRequest defines a generic payload for operations requiring only a group ID.
@@ -291,7 +292,7 @@ func (s *Server) TestMultipleKeys(c *gin.Context) {
 	}
 
 	start := time.Now()
-	results, err := s.KeyService.TestMultipleKeys(group, req.KeysText)
+	results, err := s.KeyService.TestMultipleKeys(group, req.KeysText, req.Model)
 	duration := time.Since(start).Milliseconds()
 	if err != nil {
 		if strings.Contains(err.Error(), "batch size exceeds the limit") {

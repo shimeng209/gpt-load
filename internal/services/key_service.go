@@ -313,7 +313,7 @@ func (s *KeyService) ListKeysInGroupQuery(groupID uint, statusFilter string, sea
 }
 
 // TestMultipleKeys handles a one-off validation test for multiple keys.
-func (s *KeyService) TestMultipleKeys(group *models.Group, keysText string) ([]keypool.KeyTestResult, error) {
+func (s *KeyService) TestMultipleKeys(group *models.Group, keysText string, model string) ([]keypool.KeyTestResult, error) {
 	keysToTest := s.ParseKeysFromText(keysText)
 	if len(keysToTest) > maxRequestKeys {
 		return nil, fmt.Errorf("batch size exceeds the limit of %d keys, got %d", maxRequestKeys, len(keysToTest))
@@ -329,7 +329,7 @@ func (s *KeyService) TestMultipleKeys(group *models.Group, keysText string) ([]k
 			end = len(keysToTest)
 		}
 		chunk := keysToTest[i:end]
-		results, err := s.KeyValidator.TestMultipleKeys(group, chunk)
+		results, err := s.KeyValidator.TestMultipleKeys(group, chunk, model)
 		if err != nil {
 			return nil, err
 		}

@@ -119,7 +119,8 @@ export const keysApi = {
   // 测试密钥
   async testKeys(
     group_id: number,
-    keys_text: string
+    keys_text: string,
+    model?: string
   ): Promise<{
     results: {
       key_value: string;
@@ -133,6 +134,7 @@ export const keysApi = {
       {
         group_id,
         keys_text,
+        model,
       },
       {
         hideMessage: true,

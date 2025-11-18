@@ -22,6 +22,7 @@ type UpstreamInfo struct {
 	CurrentWeight int
 }
 
+
 // BaseChannel provides common functionality for channel proxies.
 type BaseChannel struct {
 	Name               string
@@ -147,3 +148,5 @@ func (b *BaseChannel) GetHTTPClient() *http.Client {
 func (b *BaseChannel) GetStreamClient() *http.Client {
 	return b.StreamClient
 }
+
+
