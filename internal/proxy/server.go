@@ -121,8 +121,8 @@ func (ps *ProxyServer) HandleProxy(c *gin.Context) {
 		return
 	}
 
-	if selection != nil && selection.ModelOverride != "" && len(finalBodyBytes) > 0 {
-		overriddenBody, overrideErr := overrideModelInBody(finalBodyBytes, selection.ModelOverride)
+	if selection != nil && selection.SelectedModel != "" && len(finalBodyBytes) > 0 {
+		overriddenBody, overrideErr := overrideModelInBody(finalBodyBytes, selection.SelectedModel)
 		if overrideErr != nil {
 			response.Error(c, app_errors.NewAPIError(app_errors.ErrInternalServer, fmt.Sprintf("Failed to apply model override: %v", overrideErr)))
 			return

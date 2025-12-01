@@ -18,26 +18,24 @@ type SubGroupManager struct {
 }
 
 type groupSelectors struct {
-	defaultSelector *selector
-	aliasSelectors  map[string]*selector
+	modelLevelSelector *modelLevelSelector
 }
 
-// subGroupItem represents a sub-group with its weight and current weight for round-robin
-type subGroupItem struct {
-	name          string
+// modelSelectionItem represents a model with its weight and sub-group info for round-robin
+type modelSelectionItem struct {
+	model         string
 	subGroupID    uint
+	subGroupName  string
 	weight        int
 	currentWeight int
-	modelOverride string
-	models        []string        // 多模型支持
-	lastModelIndex int            // 轮询索引
 }
 
-// SelectionResult captures the selected sub-group info, along with optional overrides.
+
+// SelectionResult captures the selected model and sub-group info
 type SelectionResult struct {
 	GroupName     string
 	SubGroupID    uint
-	ModelOverride string
+	SelectedModel string
 }
 
 // NewSubGroupManager creates a new sub-group manager service
@@ -55,47 +53,33 @@ func (m *SubGroupManager) SelectSubGroup(group *models.Group, modelAlias string)
 	}
 
 	selectors := m.getSelectors(group)
-	if selectors == nil || (selectors.defaultSelector == nil && len(selectors.aliasSelectors) == 0) {
-		return nil, fmt.Errorf("no valid sub-groups available for aggregate group '%s'", group.Name)
+	if selectors == nil {
+		return nil, fmt.Errorf("no valid selectors available for aggregate group '%s'", group.Name)
 	}
 
 	alias := strings.TrimSpace(modelAlias)
-	if alias != "" && len(selectors.aliasSelectors) > 0 {
-		if sel, ok := selectors.aliasSelectors[strings.ToLower(alias)]; ok {
-			if selectedItem := sel.selectNext(); selectedItem != nil {
-				return &SelectionResult{
-					GroupName:     selectedItem.name,
-					SubGroupID:    selectedItem.subGroupID,
-					ModelOverride: sel.selectModelFromTargets(selectedItem),
-				}, nil
-			}
+
+	// 只使用模型级别选择器
+	if alias != "" && selectors.modelLevelSelector != nil {
+		if selectedItem := selectors.modelLevelSelector.selectNextModel(); selectedItem != nil {
 			logrus.WithFields(logrus.Fields{
 				"aggregate_group": group.Name,
 				"model_alias":     alias,
-			}).Warn("Model alias selector has no sub-groups with active keys, falling back to default selector")
+				"selected_model":  selectedItem.model,
+				"sub_group":       selectedItem.subGroupName,
+			}).Debug("Selected model from aggregate group")
+
+			return &SelectionResult{
+				GroupName:     selectedItem.subGroupName,
+				SubGroupID:    selectedItem.subGroupID,
+				SelectedModel: selectedItem.model,
+			}, nil
 		}
+
+		return nil, fmt.Errorf("no available models for model alias '%s' in aggregate group '%s'", alias, group.Name)
 	}
 
-	if selectors.defaultSelector == nil {
-		return nil, fmt.Errorf("no sub-groups with active keys for aggregate group '%s'", group.Name)
-	}
-
-	selectedItem := selectors.defaultSelector.selectNext()
-	if selectedItem == nil {
-		return nil, fmt.Errorf("no sub-groups with active keys for aggregate group '%s'", group.Name)
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"aggregate_group": group.Name,
-		"model_alias":     alias,
-		"selected_group":  selectedItem.name,
-	}).Debug("Selected sub-group from aggregate")
-
-	return &SelectionResult{
-		GroupName:     selectedItem.name,
-		SubGroupID:    selectedItem.subGroupID,
-		ModelOverride: selectors.defaultSelector.selectModelFromTargets(selectedItem),
-	}, nil
+	return nil, fmt.Errorf("no model mapping found for alias '%s' in aggregate group '%s'", alias, group.Name)
 }
 
 // RebuildSelectors rebuild all selectors based on the incoming group
@@ -145,209 +129,165 @@ func (m *SubGroupManager) getSelectors(group *models.Group) *groupSelectors {
 	return sel
 }
 
-// createGroupSelectors creates default and model-alias selectors for an aggregate group
+// createGroupSelectors creates model-level selectors for an aggregate group
 func (m *SubGroupManager) createGroupSelectors(group *models.Group) *groupSelectors {
 	if group.GroupType != "aggregate" || len(group.SubGroups) == 0 {
 		return nil
 	}
 
-	result := &groupSelectors{
-		aliasSelectors: make(map[string]*selector),
+	if len(group.ModelMappingList) == 0 {
+		return nil
 	}
 
+	result := &groupSelectors{}
+
+	// 创建子分组映射
 	subGroupMap := make(map[uint]models.GroupSubGroup, len(group.SubGroups))
-	defaultItems := make([]subGroupItem, 0, len(group.SubGroups))
 	for _, sg := range group.SubGroups {
 		subGroupMap[sg.SubGroupID] = sg
+	}
+
+	// 只处理第一个模型映射（简化实现）
+	mapping := group.ModelMappingList[0]
+	alias := strings.TrimSpace(mapping.Model)
+	if alias == "" {
+		return nil
+	}
+
+	// 创建模型级别的选择器
+	var modelItems []modelSelectionItem
+	for _, target := range mapping.Targets {
+		sg, ok := subGroupMap[target.SubGroupID]
+		if !ok {
+			logrus.WithFields(logrus.Fields{
+				"aggregate_group": group.Name,
+				"model_alias":     alias,
+				"sub_group_id":    target.SubGroupID,
+			}).Warn("Model mapping target references unknown sub-group")
+			continue
+		}
+
+		// 计算最终权重：子分组权重 × 模型映射权重
+		modelMappingWeight := target.Weight
+		if modelMappingWeight <= 0 {
+			modelMappingWeight = 1  // 默认权重
+		}
+
+		subGroupWeight := sg.Weight
+		if subGroupWeight <= 0 {
+			subGroupWeight = 1  // 默认权重
+		}
+
+		finalWeight := subGroupWeight * modelMappingWeight
+
+		logrus.WithFields(logrus.Fields{
+			"aggregate_group":    group.Name,
+			"model_alias":        alias,
+			"sub_group_id":       target.SubGroupID,
+			"sub_group_weight":   subGroupWeight,
+			"model_mapping_weight": modelMappingWeight,
+			"final_weight":       finalWeight,
+		}).Debug("Calculated final model weight")
+
 		name := sg.SubGroupName
 		if name == "" {
 			name = fmt.Sprintf("group-%d", sg.SubGroupID)
 		}
-		defaultItems = append(defaultItems, subGroupItem{
-			name:          name,
-			subGroupID:    sg.SubGroupID,
-			weight:        sg.Weight,
-			currentWeight: 0,
-			modelOverride: "",
-			models:        []string{},
-			lastModelIndex: 0,
-		})
-	}
 
-	if len(defaultItems) > 0 {
-		result.defaultSelector = newSelector(group, "", defaultItems, m.store)
-	}
+		// 展平模型列表 - 每个模型作为一个独立的选择项
+		var models []string
+		if len(target.Models) > 0 {
+			models = target.Models
+		} else if target.Model != "" {
+			models = []string{target.Model}
+		}
 
-	if len(group.ModelMappingList) > 0 {
-		for _, mapping := range group.ModelMappingList {
-			alias := strings.TrimSpace(mapping.Model)
-			if alias == "" {
+		for _, model := range models {
+			if model == "" {
 				continue
 			}
-
-			items := make([]subGroupItem, 0, len(mapping.Targets))
-			seen := make(map[uint]struct{}, len(mapping.Targets))
-			for _, target := range mapping.Targets {
-				if _, exists := seen[target.SubGroupID]; exists {
-					continue
-				}
-				sg, ok := subGroupMap[target.SubGroupID]
-				if !ok {
-					logrus.WithFields(logrus.Fields{
-						"aggregate_group": group.Name,
-						"model_alias":     alias,
-						"sub_group_id":    target.SubGroupID,
-					}).Warn("Model mapping target references unknown sub-group")
-					continue
-				}
-				weight := target.Weight
-				if weight <= 0 {
-					weight = sg.Weight
-				}
-				if weight <= 0 {
-					logrus.WithFields(logrus.Fields{
-						"aggregate_group": group.Name,
-						"model_alias":     alias,
-						"sub_group_id":    target.SubGroupID,
-					}).Warn("Model mapping target resolved to non-positive weight, skipping")
-					continue
-				}
-				name := sg.SubGroupName
-				if name == "" {
-					name = fmt.Sprintf("group-%d", sg.SubGroupID)
-				}
-				// 处理多模型支持，保持向后兼容
-				var models []string
-				if len(target.Models) > 0 {
-					models = target.Models
-				} else if target.Model != "" {
-					models = []string{target.Model}
-				}
-
-				items = append(items, subGroupItem{
-					name:          name,
-					subGroupID:    target.SubGroupID,
-					weight:        weight,
-					currentWeight: 0,
-					modelOverride: target.Model, // 保持向后兼容
-					models:        models,
-					lastModelIndex: 0,
-				})
-				seen[target.SubGroupID] = struct{}{}
-			}
-
-			if len(items) == 0 {
-				continue
-			}
-
-			result.aliasSelectors[strings.ToLower(alias)] = newSelector(group, alias, items, m.store)
+			modelItems = append(modelItems, modelSelectionItem{
+				model:         model,
+				subGroupID:    target.SubGroupID,
+				subGroupName:  name,
+				weight:        finalWeight,
+				currentWeight: 0,
+			})
 		}
 	}
 
-	if result.defaultSelector == nil && len(result.aliasSelectors) == 0 {
-		return nil
+	// 如果有模型项，创建模型级别选择器
+	if len(modelItems) > 0 {
+		result.modelLevelSelector = newModelLevelSelector(group, alias, modelItems, m.store)
+		return result
 	}
-
-	return result
-}
-
-func newSelector(group *models.Group, alias string, items []subGroupItem, store store.Store) *selector {
-	return &selector{
-		groupID:    group.ID,
-		groupName:  group.Name,
-		modelAlias: alias,
-		subGroups:  items,
-		store:      store,
-	}
-}
-
-// selector encapsulates the weighted round-robin algorithm for a single aggregate group
-type selector struct {
-	groupID    uint
-	groupName  string
-	modelAlias string
-	subGroups  []subGroupItem
-	store      store.Store
-	mu         sync.Mutex
-}
-
-// selectNext uses weighted round-robin algorithm to select a sub-group with active keys
-func (s *selector) selectNext() *subGroupItem {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if len(s.subGroups) == 0 {
-		return nil
-	}
-
-	if len(s.subGroups) == 1 {
-		if s.hasActiveKeys(s.subGroups[0].subGroupID) {
-			return &s.subGroups[0]
-		}
-		logrus.WithFields(logrus.Fields{
-			"group_id":   s.subGroups[0].subGroupID,
-			"group_name": s.subGroups[0].name,
-			"model_alias": func() string {
-				if s.modelAlias == "" {
-					return ""
-				}
-				return s.modelAlias
-			}(),
-		}).Debug("Single sub-group has no active keys")
-		return nil
-	}
-
-	attempted := make(map[uint]bool)
-	for len(attempted) < len(s.subGroups) {
-		item := s.selectByWeight()
-		if item == nil {
-			break
-		}
-
-		if attempted[item.subGroupID] {
-			continue
-		}
-		attempted[item.subGroupID] = true
-
-		if s.hasActiveKeys(item.subGroupID) {
-			logrus.WithFields(logrus.Fields{
-				"aggregate_group": s.groupName,
-				"selected_group":  item.name,
-				"attempts":        len(attempted),
-				"model_alias":     s.modelAlias,
-			}).Debug("Selected sub-group with active keys")
-			return item
-		}
-
-		logrus.WithFields(logrus.Fields{
-			"group_id":   item.subGroupID,
-			"group_name": item.name,
-			"attempts":   len(attempted),
-			"model_alias": func() string {
-				if s.modelAlias == "" {
-					return ""
-				}
-				return s.modelAlias
-			}(),
-		}).Debug("Sub-group has no active keys, trying next")
-	}
-
-	logrus.WithFields(logrus.Fields{
-		"aggregate_group":  s.groupName,
-		"total_sub_groups": len(s.subGroups),
-		"model_alias":      s.modelAlias,
-	}).Warn("No sub-groups with active keys available")
 
 	return nil
 }
 
-// selectByWeight implements smooth weighted round-robin algorithm
-func (s *selector) selectByWeight() *subGroupItem {
-	totalWeight := 0
-	var best *subGroupItem
+func newModelLevelSelector(group *models.Group, alias string, items []modelSelectionItem, store store.Store) *modelLevelSelector {
+	return &modelLevelSelector{
+		groupID:    group.ID,
+		groupName:  group.Name,
+		modelAlias: alias,
+		modelItems: items,
+		store:      store,
+	}
+}
 
-	for i := range s.subGroups {
-		item := &s.subGroups[i]
+// modelLevelSelector encapsulates the weighted round-robin algorithm at model level
+type modelLevelSelector struct {
+	groupID     uint
+	groupName   string
+	modelAlias  string
+	modelItems  []modelSelectionItem
+	store       store.Store
+	mu          sync.Mutex
+}
+
+// selectNextModel uses weighted round-robin algorithm to select a model with active keys
+func (m *modelLevelSelector) selectNextModel() *modelSelectionItem {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if len(m.modelItems) == 0 {
+		return nil
+	}
+
+	if len(m.modelItems) == 1 {
+		if m.hasActiveKeys(m.modelItems[0].subGroupID) {
+			return &m.modelItems[0]
+		}
+		return nil
+	}
+
+	attempted := make(map[string]bool) // 使用model作为key
+	for len(attempted) < len(m.modelItems) {
+		item := m.selectModelByWeight()
+		if item == nil {
+			break
+		}
+
+		if attempted[item.model] {
+			continue
+		}
+		attempted[item.model] = true
+
+		if m.hasActiveKeys(item.subGroupID) {
+			return item
+		}
+	}
+
+	return nil
+}
+
+// selectModelByWeight implements smooth weighted round-robin algorithm for models
+func (m *modelLevelSelector) selectModelByWeight() *modelSelectionItem {
+	totalWeight := 0
+	var best *modelSelectionItem
+
+	for i := range m.modelItems {
+		item := &m.modelItems[i]
 		totalWeight += item.weight
 		item.currentWeight += item.weight
 
@@ -357,7 +297,7 @@ func (s *selector) selectByWeight() *subGroupItem {
 	}
 
 	if best == nil {
-		return &s.subGroups[0]
+		return &m.modelItems[0]
 	}
 
 	best.currentWeight -= totalWeight
@@ -365,38 +305,11 @@ func (s *selector) selectByWeight() *subGroupItem {
 }
 
 // hasActiveKeys checks if a sub-group has available API keys
-func (s *selector) hasActiveKeys(groupID uint) bool {
+func (m *modelLevelSelector) hasActiveKeys(groupID uint) bool {
 	key := fmt.Sprintf("group:%d:active_keys", groupID)
-	length, err := s.store.LLen(key)
+	length, err := m.store.LLen(key)
 	if err != nil {
-		logrus.WithFields(logrus.Fields{
-			"group_id": groupID,
-			"error":    err,
-		}).Debug("Error checking active keys, assuming available")
 		return true
 	}
 	return length > 0
-}
-
-// selectModelFromTargets 从多个模型中选择一个（轮询）
-func (s *selector) selectModelFromTargets(item *subGroupItem) string {
-	// 优先使用单个模型（向后兼容）
-	if item.modelOverride != "" {
-		return item.modelOverride
-	}
-
-	// 处理多模型情况
-	if len(item.models) == 0 {
-		return ""
-	}
-
-	if len(item.models) == 1 {
-		return item.models[0]
-	}
-
-	// 轮询选择
-	selectedModel := item.models[item.lastModelIndex%len(item.models)]
-	item.lastModelIndex++
-
-	return selectedModel
 }
